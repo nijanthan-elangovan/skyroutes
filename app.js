@@ -248,6 +248,167 @@
     // ---- API ----
     SR.fetchRoutes().then(function(routes) { SR.flightSystem.setRoutes(routes); fillQueue(); });
 
+    // =======================================
+    // TRACK PANEL (easter egg)
+    // =======================================
+    var panel = document.getElementById('track-panel');
+    var eggBtn = document.getElementById('egg-btn');
+    var tpClose = document.getElementById('tp-close');
+    var tpFlightInput = document.getElementById('tp-flight');
+    var tpFromInput = document.getElementById('tp-from');
+    var tpToInput = document.getElementById('tp-to');
+    var tpSearchFlight = document.getElementById('tp-search-flight');
+    var tpSearchRoute = document.getElementById('tp-search-route');
+    var tpStatus = document.getElementById('tp-status');
+
+    eggBtn.addEventListener('click', function() {
+        panel.classList.toggle('open');
+    });
+    tpClose.addEventListener('click', function() {
+        panel.classList.remove('open');
+    });
+
+    function setStatus(msg, type) {
+        tpStatus.textContent = msg;
+        tpStatus.className = 'tp-status' + (type ? ' ' + type : '');
+    }
+
+    // Inject a custom flight into the state machine
+    function injectFlight(fl) {
+        fadeOutPopup();
+        prevFlight = flight;
+        prevFadeStart = performance.now();
+        flight = fl;
+        // Clear queue so it chains from this flight next
+        queue = [];
+        fillQueue();
+        state = STATE.PAN;
+        stateStart = performance.now();
+        panel.classList.remove('open');
+    }
+
+    // Search by flight number — look in live data
+    tpSearchFlight.addEventListener('click', function() {
+        var query = (tpFlightInput.value || '').trim().toUpperCase().replace(/\s+/g, '');
+        if (query.length < 3) { setStatus('Enter a flight number', 'error'); return; }
+
+        setStatus('Searching...');
+
+        // Search live flights cache
+        var match = null;
+        for (var i = 0; i < SR.liveFlights.length; i++) {
+            var f = SR.liveFlights[i];
+            var cs = f.callsign.replace(/\s+/g, '');
+            var fn = f.flightName.replace(/\s+/g, '');
+            if (cs === query || fn === query || cs.indexOf(query) === 0) {
+                match = f;
+                break;
+            }
+        }
+
+        if (match) {
+            // Find nearest airports for departure (use origin country) and arrival (heading-based guess)
+            var nearCode = match.nearAirport;
+            if (!nearCode) {
+                setStatus('Flight found but no nearby airport', 'error');
+                return;
+            }
+
+            // Pick a plausible destination — furthest airport in the heading direction
+            var bestDest = null, bestScore = -Infinity;
+            var headRad = (match.heading || 0) * Math.PI / 180;
+            for (var code in SR.AIRPORTS) {
+                if (code === nearCode) continue;
+                var ap = SR.AIRPORTS[code];
+                var dLat = ap.lat - match.lat;
+                var dLon = ap.lon - match.lon;
+                var dist = Math.sqrt(dLat * dLat + dLon * dLon);
+                if (dist < 5) continue; // too close
+                var angle = Math.atan2(dLon, dLat);
+                var angleDiff = Math.abs(angle - headRad);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+                var score = dist * Math.max(0, 1 - angleDiff / (Math.PI * 0.6));
+                if (score > bestScore) { bestScore = score; bestDest = code; }
+            }
+
+            if (!bestDest) { setStatus('Could not determine route', 'error'); return; }
+
+            var fromAp = SR.getAirport(nearCode);
+            var toAp = SR.getAirport(bestDest);
+
+            setStatus(match.flightName + '  ' + nearCode + ' → ' + bestDest, 'success');
+
+            // Build and inject the flight
+            var fl = SR.flightSystem.buildFlight(nearCode);
+            // Override with real data
+            fl.fromCode = nearCode;
+            fl.toCode = bestDest;
+            fl.from = fromAp;
+            fl.to = toAp;
+            fl.flightName = match.flightName;
+            fl.airlineName = match.airlineName;
+            fl.baseAlt = match.altitude;
+            fl.baseSpeed = match.speed;
+            fl.isLive = true;
+
+            setTimeout(function() { injectFlight(fl); }, 800);
+        } else {
+            setStatus('Flight not found in live data', 'error');
+        }
+    });
+
+    // Search by route — build a flight between two airports
+    tpSearchRoute.addEventListener('click', function() {
+        var from = (tpFromInput.value || '').trim().toUpperCase();
+        var to = (tpToInput.value || '').trim().toUpperCase();
+
+        if (from.length < 2 || to.length < 2) {
+            setStatus('Enter airport codes (e.g. JFK, LHR)', 'error');
+            return;
+        }
+
+        var fromAp = SR.getAirport(from);
+        var toAp = SR.getAirport(to);
+
+        if (!fromAp) { setStatus(from + ' not in airport database', 'error'); return; }
+        if (!toAp) { setStatus(to + ' not in airport database', 'error'); return; }
+
+        setStatus('Tracking ' + from + ' → ' + to, 'success');
+
+        // Build flight for this route with proper arc
+        var fl = SR.flightSystem.buildFlight(from);
+        fl.fromCode = from;
+        fl.toCode = to;
+        fl.from = fromAp;
+        fl.to = toAp;
+        fl.arcPoints = SR.flightSystem.computeArc(fromAp, toAp);
+        fl.distance = Math.round(SR.flightSystem.haversineKm(fromAp, toAp));
+        fl.duration = SR.flightSystem.durationForDistance(fl.distance);
+
+        // Try to find a real flight on this route
+        var real = SR.getRealFlight ? SR.getRealFlight(from) : null;
+        if (real) {
+            fl.flightName = real.flightName;
+            fl.airlineName = real.airlineName;
+            fl.baseAlt = real.altitude;
+            fl.baseSpeed = real.speed;
+            fl.isLive = true;
+        }
+
+        setTimeout(function() { injectFlight(fl); }, 800);
+    });
+
+    // Enter key support
+    tpFlightInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') tpSearchFlight.click();
+    });
+    tpFromInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') tpSearchRoute.click();
+    });
+    tpToInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') tpSearchRoute.click();
+    });
+
     // ---- Main loop ----
     var lastTime = performance.now();
 

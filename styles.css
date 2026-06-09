@@ -256,6 +256,161 @@ body::after {
     white-space: nowrap;
 }
 
+/* ---- Easter egg button ---- */
+#egg-btn {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 50;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: rgba(255,255,255,0.08);
+    cursor: pointer;
+    border-radius: 50%;
+    transition: color 0.5s ease, background 0.5s ease;
+    pointer-events: all;
+    user-select: none;
+    background: transparent;
+}
+#egg-btn:hover {
+    color: rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.04);
+}
+
+/* ---- Track panel (slides from right) ---- */
+#track-panel {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100%;
+    z-index: 55;
+    background: rgba(6, 8, 14, 0.88);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-left: 1px solid rgba(255,255,255,0.04);
+    padding: 24px 20px;
+    transition: right 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow-y: auto;
+    pointer-events: all;
+    cursor: default;
+}
+#track-panel.open {
+    right: 0;
+}
+
+.tp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 28px;
+}
+.tp-title {
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: rgba(255,255,255,0.3);
+    font-weight: 600;
+}
+#tp-close {
+    font-size: 18px;
+    color: rgba(255,255,255,0.2);
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: color 0.2s, background 0.2s;
+}
+#tp-close:hover {
+    color: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.05);
+}
+
+.tp-section {
+    margin-bottom: 16px;
+}
+.tp-label {
+    display: block;
+    font-size: 7px;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.2);
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+.tp-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.tp-input {
+    flex: 1;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    color: rgba(255,255,255,0.8);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.tp-input::placeholder {
+    color: rgba(255,255,255,0.12);
+    text-transform: uppercase;
+}
+.tp-input:focus {
+    border-color: rgba(255,255,255,0.15);
+}
+.tp-input-half {
+    flex: 0 0 60px;
+    text-align: center;
+}
+.tp-arrow {
+    font-size: 12px;
+    color: rgba(255,255,255,0.15);
+}
+.tp-btn {
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    font-family: inherit;
+}
+.tp-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+}
+.tp-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.04);
+    margin: 18px 0;
+}
+.tp-status {
+    margin-top: 14px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: rgba(255,255,255,0.25);
+    min-height: 20px;
+    line-height: 1.5;
+}
+.tp-status.error { color: rgba(255,100,100,0.5); }
+.tp-status.success { color: rgba(100,255,180,0.5); }
+
 @media (prefers-reduced-motion: reduce) {
     body::before,
     .leaflet-tile-pane {

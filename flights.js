@@ -478,6 +478,19 @@
                 routes.forEach(function(r){if(!existing[r.join('-')])SR.POPULAR_ROUTES.push(r);});
             }
             shufflePool();
+        },
+
+        // Exposed for track panel to recompute arcs
+        computeArc: function(from, to) {
+            return computeArc(from, to);
+        },
+
+        haversineKm: function(a, b) {
+            return haversineKm(a, b);
+        },
+
+        durationForDistance: function(km) {
+            return durationForDistance(km);
         }
     };
 

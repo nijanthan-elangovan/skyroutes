@@ -13,6 +13,33 @@
     <canvas id="flight-canvas"></canvas>
     <div id="labels-overlay"></div>
 
+    <!-- Easter egg: track a real flight -->
+    <div id="egg-btn" title="Track a flight">✈</div>
+    <div id="track-panel">
+        <div class="tp-header">
+            <span class="tp-title">TRACK FLIGHT</span>
+            <span id="tp-close">×</span>
+        </div>
+        <div class="tp-section">
+            <label class="tp-label">FLIGHT NUMBER</label>
+            <div class="tp-input-row">
+                <input type="text" id="tp-flight" class="tp-input" placeholder="e.g. QR 845" spellcheck="false" autocomplete="off">
+                <button id="tp-search-flight" class="tp-btn">GO</button>
+            </div>
+        </div>
+        <div class="tp-divider"></div>
+        <div class="tp-section">
+            <label class="tp-label">ROUTE</label>
+            <div class="tp-input-row">
+                <input type="text" id="tp-from" class="tp-input tp-input-half" placeholder="FROM" spellcheck="false" autocomplete="off" maxlength="3">
+                <span class="tp-arrow">→</span>
+                <input type="text" id="tp-to" class="tp-input tp-input-half" placeholder="TO" spellcheck="false" autocomplete="off" maxlength="3">
+                <button id="tp-search-route" class="tp-btn">GO</button>
+            </div>
+        </div>
+        <div id="tp-status" class="tp-status"></div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="airports.js"></script>
     <script src="flights.js"></script>
