@@ -213,15 +213,32 @@
         buildFlight: function(fromCode) {
             var r=fromCode ? nextRouteFrom(fromCode) : nextRoute();
             var fromAp=SR.getAirport(r[0]), toAp=SR.getAirport(r[1]);
-            var dist=Math.round(haversineKm(fromAp,toAp)), fl=randomFlight();
+            var dist=Math.round(haversineKm(fromAp,toAp));
+
+            // Try to get real flight data near the departure airport
+            var real = SR.getRealFlight ? SR.getRealFlight(r[0]) : null;
+            var flightName, airlineName, baseAlt, baseSpeed;
+
+            if (real) {
+                flightName = real.flightName;
+                airlineName = real.airlineName;
+                baseAlt = real.altitude || (30000+Math.floor(Math.random()*12000));
+                baseSpeed = real.speed || (420+Math.floor(Math.random()*140));
+            } else {
+                var fl = randomFlight();
+                flightName = fl.number;
+                airlineName = fl.airline;
+                baseAlt = 30000+Math.floor(Math.random()*12000);
+                baseSpeed = 420+Math.floor(Math.random()*140);
+            }
+
             return {
                 fromCode:r[0], toCode:r[1], from:fromAp, to:toAp,
                 arcPoints:computeArc(fromAp,toAp), startTime:0,
                 duration:durationForDistance(dist), color:pickColor(),
-                flightName:fl.number, airlineName:fl.airline,
-                baseAlt:30000+Math.floor(Math.random()*12000),
-                baseSpeed:420+Math.floor(Math.random()*140),
-                distance:dist
+                flightName:flightName, airlineName:airlineName,
+                baseAlt:baseAlt, baseSpeed:baseSpeed,
+                distance:dist, isLive: !!real
             };
         },
 

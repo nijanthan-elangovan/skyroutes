@@ -21,6 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Inject OpenSky credentials
+        run: |
+          echo '{"clientId":"${{ secrets.OPENSKY_CLIENT_ID }}","clientSecret":"${{ secrets.OPENSKY_CLIENT_SECRET }}"}' > credentails.json
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
