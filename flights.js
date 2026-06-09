@@ -279,22 +279,28 @@
             var c=current.color, h=c.h, s=c.s, l=c.l;
             var exactHead = state.progress * (pts.length - 1);
             var headIdx = Math.max(0, Math.min(Math.floor(exactHead), pts.length - 1));
-            // Interpolated head position for smooth movement
             var headPt = lerpPt(pts, exactHead);
 
-            // ---- Full arc ghost (upcoming path, very faint) ----
-            ctx.beginPath();
-            var f=map.latLngToContainerPoint(L.latLng(pts[0].lat,pts[0].lon));
-            ctx.moveTo(f.x,f.y);
-            for(var i=1;i<pts.length;i++){
-                var p=map.latLngToContainerPoint(L.latLng(pts[i].lat,pts[i].lon));
-                ctx.lineTo(p.x,p.y);
+            // ---- PROJECT ALL POINTS ONCE (the big perf win) ----
+            var scr = current._scrCache;
+            if(!scr || scr.length !== pts.length) {
+                scr = new Array(pts.length);
+                current._scrCache = scr;
             }
+            for(var i=0;i<pts.length;i++){
+                scr[i] = map.latLngToContainerPoint(L.latLng(pts[i].lat, pts[i].lon));
+            }
+            var hp = map.latLngToContainerPoint(L.latLng(headPt.lat, headPt.lon));
+
+            // ---- Full arc ghost (1 draw call) ----
+            ctx.beginPath();
+            ctx.moveTo(scr[0].x, scr[0].y);
+            for(var i=1;i<pts.length;i++) ctx.lineTo(scr[i].x, scr[i].y);
             ctx.strokeStyle='hsla('+h+','+Math.round(s*0.3)+'%,'+Math.round(l*0.5)+'%,'+(alpha*0.05)+')';
             ctx.lineWidth=1;
             ctx.stroke();
 
-            // ---- Slowly moving route lights ----
+            // ---- Route lights (reuse same path) ----
             ctx.save();
             ctx.setLineDash([1,12]);
             ctx.lineDashOffset=-(now*0.012);
@@ -304,216 +310,147 @@
             ctx.stroke();
             ctx.restore();
 
-            // ---- Departure and arrival airport beacons ----
-            var departureIntensity=Math.max(0,1-(state.progress/0.12));
-            var arrivalIntensity=Math.max(0,(state.progress-0.86)/0.14);
-            drawAirportBeacon(ctx,map,current.from,c,departureIntensity,now);
-            drawAirportBeacon(ctx,map,current.to,c,arrivalIntensity,now);
-            drawAirportShockwave(ctx,map,current.from,c,state.progress/0.055);
-            drawAirportShockwave(ctx,map,current.to,c,(state.progress-0.945)/0.055);
-            drawApproachRings(ctx,map,current.to,c,Math.max(0,(state.progress-0.72)/0.28),now);
+            // ---- Beacons (only when visible) ----
+            var depI=Math.max(0,1-(state.progress/0.12));
+            var arrI=Math.max(0,(state.progress-0.86)/0.14);
+            if(depI>0.01) drawAirportBeacon(ctx,map,current.from,c,depI,now);
+            if(arrI>0.01) drawAirportBeacon(ctx,map,current.to,c,arrI,now);
+            if(state.progress<0.06) drawAirportShockwave(ctx,map,current.from,c,state.progress/0.055);
+            if(state.progress>0.945) drawAirportShockwave(ctx,map,current.to,c,(state.progress-0.945)/0.055);
+            if(state.progress>0.72) drawApproachRings(ctx,map,current.to,c,(state.progress-0.72)/0.28,now);
 
-            // ---- Full traveled trail (0 → head), fades from dim at origin to bright at head ----
+            // ---- Traveled trail: 3 bands instead of per-segment (3 draw calls, not 120) ----
             if(headIdx > 2) {
-                for(var i=0; i<headIdx; i++){
-                    // segT: 0 at origin, 1 at head
-                    var segT = i / headIdx;
-
-                    // Opacity: origin starts dim, builds toward head
-                    // Use a curve so the old trail stays visible longer
-                    var segAlpha = alpha * (0.08 + segT * segT * 0.52);
-                    var segWidth = 0.6 + segT * 1.8;
-
-                    var a=map.latLngToContainerPoint(L.latLng(pts[i].lat,pts[i].lon));
-                    var b=map.latLngToContainerPoint(L.latLng(pts[i+1].lat,pts[i+1].lon));
-
+                // Band 1: old trail (0 → 60% of head) — dim, thin
+                var band1End = Math.floor(headIdx * 0.6);
+                if(band1End > 1) {
                     ctx.beginPath();
-                    ctx.moveTo(a.x,a.y);
-                    ctx.lineTo(b.x,b.y);
-                    ctx.strokeStyle='hsla('+h+','+s+'%,'+(l+5)+'%,'+segAlpha+')';
-                    ctx.lineWidth=segWidth;
+                    ctx.moveTo(scr[0].x, scr[0].y);
+                    for(var i=1;i<=band1End;i++) ctx.lineTo(scr[i].x, scr[i].y);
+                    ctx.strokeStyle='hsla('+h+','+s+'%,'+(l+5)+'%,'+(alpha*0.12)+')';
+                    ctx.lineWidth=0.8;
                     ctx.lineCap='round';
                     ctx.stroke();
                 }
 
-                // Bright glow near head (last 10 segments)
-                var glowStart=Math.max(0,headIdx-10);
-                for(var i=glowStart;i<headIdx;i++){
-                    var t=(i-glowStart)/10;
-                    var a=map.latLngToContainerPoint(L.latLng(pts[i].lat,pts[i].lon));
-                    var b=map.latLngToContainerPoint(L.latLng(pts[i+1].lat,pts[i+1].lon));
+                // Band 2: mid trail (60% → 90% of head) — medium
+                var band2Start = Math.max(1, band1End);
+                var band2End = Math.floor(headIdx * 0.9);
+                if(band2End > band2Start) {
                     ctx.beginPath();
-                    ctx.moveTo(a.x,a.y);
-                    ctx.lineTo(b.x,b.y);
-                    ctx.strokeStyle='hsla('+h+','+(s+10)+'%,'+(l+15)+'%,'+(alpha*t*0.35)+')';
-                    ctx.lineWidth=3+t*2;
+                    ctx.moveTo(scr[band2Start].x, scr[band2Start].y);
+                    for(var i=band2Start+1;i<=band2End;i++) ctx.lineTo(scr[i].x, scr[i].y);
+                    ctx.strokeStyle='hsla('+h+','+s+'%,'+(l+5)+'%,'+(alpha*0.3)+')';
+                    ctx.lineWidth=1.5;
+                    ctx.lineCap='round';
+                    ctx.stroke();
+                }
+
+                // Band 3: hot trail (90% → head) — bright, thick
+                var band3Start = Math.max(1, band2End);
+                if(headIdx > band3Start) {
+                    ctx.beginPath();
+                    ctx.moveTo(scr[band3Start].x, scr[band3Start].y);
+                    for(var i=band3Start+1;i<=headIdx;i++) ctx.lineTo(scr[i].x, scr[i].y);
+                    ctx.lineTo(hp.x, hp.y);
+                    ctx.strokeStyle='hsla('+h+','+(s+10)+'%,'+(l+10)+'%,'+(alpha*0.55)+')';
+                    ctx.lineWidth=2.5;
                     ctx.lineCap='round';
                     ctx.stroke();
                 }
             }
 
-            // ---- Distance tick marks along upcoming path (every ~1000km) ----
-            if(headIdx < pts.length - 5) {
-                var kmPerSeg = current.distance / pts.length;
-                var segsPer1000 = Math.round(1000 / kmPerSeg);
-                if(segsPer1000 > 3) {
-                    for(var i = headIdx + segsPer1000; i < pts.length; i += segsPer1000) {
-                        var tp = map.latLngToContainerPoint(L.latLng(pts[i].lat, pts[i].lon));
-                        ctx.beginPath();
-                        ctx.arc(tp.x, tp.y, 1.5, 0, Math.PI*2);
-                        ctx.fillStyle = 'hsla('+h+','+(s*0.5)+'%,'+(l+10)+'%,'+(alpha*0.18)+')';
-                        ctx.fill();
-                    }
-                }
+            // ---- City labels ----
+            ctx.font='600 9px "SF Mono","Fira Code","Consolas",monospace';
+            ctx.textBaseline='middle';
+            ctx.textAlign='center';
+            var depAlpha=alpha*Math.max(0,1-state.progress/0.2);
+            if(depAlpha>0.01){
+                ctx.fillStyle='hsla('+h+','+(s+5)+'%,'+(l+20)+'%,'+depAlpha+')';
+                ctx.fillText(current.from.name.toUpperCase(),scr[0].x,scr[0].y-18);
+            }
+            var arrAlpha=alpha*Math.max(0,(state.progress-0.75)/0.25);
+            if(arrAlpha>0.01){
+                ctx.fillStyle='hsla('+h+','+(s+5)+'%,'+(l+20)+'%,'+arrAlpha+')';
+                ctx.fillText(current.to.name.toUpperCase(),scr[pts.length-1].x,scr[pts.length-1].y-18);
             }
 
-            // ---- Departure / arrival city name labels on canvas ----
-            var depPt = map.latLngToContainerPoint(L.latLng(current.from.lat, current.from.lon));
-            var arrPt = map.latLngToContainerPoint(L.latLng(current.to.lat, current.to.lon));
-            ctx.font = '600 9px "SF Mono","Fira Code","Consolas",monospace';
-            ctx.textBaseline = 'middle';
-            // Departure label (fades as we leave)
-            var depAlpha = alpha * Math.max(0, 1 - state.progress / 0.2);
-            if(depAlpha > 0.01) {
-                ctx.textAlign = 'center';
-                ctx.fillStyle = 'hsla('+h+','+(s+5)+'%,'+(l+20)+'%,'+depAlpha+')';
-                ctx.fillText(current.from.name.toUpperCase(), depPt.x, depPt.y - 18);
-            }
-            // Arrival label (fades in as we approach)
-            var arrAlpha = alpha * Math.max(0, (state.progress - 0.75) / 0.25);
-            if(arrAlpha > 0.01) {
-                ctx.textAlign = 'center';
-                ctx.fillStyle = 'hsla('+h+','+(s+5)+'%,'+(l+20)+'%,'+arrAlpha+')';
-                ctx.fillText(current.to.name.toUpperCase(), arrPt.x, arrPt.y - 18);
-            }
+            // ---- Head glow ----
+            var cruiseI=Math.min(1,state.progress/0.18)*Math.min(1,(1-state.progress)/0.18)*alpha;
+            if(cruiseI>0.01) drawRadarSweep(ctx,hp,c,cruiseI,now);
 
-            // ---- Head glow (using interpolated position) ----
-            var hp=map.latLngToContainerPoint(L.latLng(headPt.lat,headPt.lon));
-            var cruiseIntensity=Math.min(1,state.progress/0.18)*Math.min(1,(1-state.progress)/0.18)*alpha;
-            drawWake(ctx,map,pts,headIdx,c,alpha,now);
-            drawRadarSweep(ctx,hp,c,cruiseIntensity,now);
-
-            // ---- Altitude line (dashed vertical from plane to "ground") ----
-            var altProgress;
-            if(state.progress<0.15) altProgress=state.progress/0.15;
-            else if(state.progress>0.85) altProgress=(1-state.progress)/0.15;
-            else altProgress=1;
-            var altLineLen = 22 * altProgress * alpha;
-            if(altLineLen > 1) {
-                ctx.save();
-                ctx.setLineDash([2,3]);
-                ctx.beginPath();
-                ctx.moveTo(hp.x, hp.y + 10);
-                ctx.lineTo(hp.x, hp.y + 10 + altLineLen);
-                ctx.strokeStyle = 'hsla('+h+','+s+'%,'+(l+10)+'%,'+(alpha*0.2)+')';
-                ctx.lineWidth = 0.8;
-                ctx.stroke();
-                ctx.restore();
-                ctx.beginPath();
-                ctx.ellipse(hp.x, hp.y + 10 + altLineLen, 4, 1.5, 0, 0, Math.PI*2);
-                ctx.fillStyle = 'hsla('+h+','+s+'%,'+l+'%,'+(alpha*0.1)+')';
-                ctx.fill();
-            }
-
-            var gg=ctx.createRadialGradient(hp.x,hp.y,0,hp.x,hp.y,18);
-            gg.addColorStop(0,  'hsla('+h+','+(s+10)+'%,'+(l+15)+'%,'+(alpha*0.55)+')');
+            var gg=ctx.createRadialGradient(hp.x,hp.y,0,hp.x,hp.y,16);
+            gg.addColorStop(0,'hsla('+h+','+(s+10)+'%,'+(l+15)+'%,'+(alpha*0.55)+')');
             gg.addColorStop(0.3,'hsla('+h+','+s+'%,'+l+'%,'+(alpha*0.15)+')');
-            gg.addColorStop(1,  'hsla('+h+','+s+'%,'+l+'%,0)');
+            gg.addColorStop(1,'hsla('+h+','+s+'%,'+l+'%,0)');
             ctx.beginPath();
-            ctx.arc(hp.x,hp.y,18,0,Math.PI*2);
+            ctx.arc(hp.x,hp.y,16,0,Math.PI*2);
             ctx.fillStyle=gg;
             ctx.fill();
 
-            // ---- Smooth angle (interpolated + low-pass filtered) ----
-            var angle = smoothAngle(smoothScreenAngle(map, pts, exactHead));
+            // ---- Smooth angle ----
+            var angle=smoothAngle(smoothScreenAngle(map,pts,exactHead));
 
-            // ---- Contrails (thin white lines from each wingtip) ----
-            if(state.progress > 0.08 && state.progress < 0.92 && headIdx > 8) {
-                var sinA = Math.sin(angle), cosA = Math.cos(angle);
-                // Wing offsets (perpendicular to heading)
-                var wingL = { x: hp.x + sinA * 6, y: hp.y - cosA * 6 };
-                var wingR = { x: hp.x - sinA * 6, y: hp.y + cosA * 6 };
-                var cLen = 14; // trail segments back
+            // ---- Contrails (simplified: 2 lines, not per-segment) ----
+            if(state.progress>0.08 && state.progress<0.92 && headIdx>6){
+                var sinA=Math.sin(angle),cosA=Math.cos(angle);
+                var cBack=Math.max(0,headIdx-18);
+                var bp=scr[cBack];
                 ctx.save();
-                ctx.lineWidth = 0.6;
-                ctx.lineCap = 'round';
-                for(var ci = 0; ci < cLen; ci++) {
-                    var cIdx = exactHead - ci * 1.5;
-                    if(cIdx < 0) break;
-                    var cIdx2 = exactHead - (ci+1) * 1.5;
-                    if(cIdx2 < 0) break;
-                    var cp1 = lerpPt(pts, cIdx);
-                    var cp2 = lerpPt(pts, cIdx2);
-                    var cs1 = map.latLngToContainerPoint(L.latLng(cp1.lat, cp1.lon));
-                    var cs2 = map.latLngToContainerPoint(L.latLng(cp2.lat, cp2.lon));
-                    var cAngle = Math.atan2(cs1.y - cs2.y, cs1.x - cs2.x);
-                    var sinC = Math.sin(cAngle), cosC = Math.cos(cAngle);
-                    var ca = alpha * (1 - ci/cLen) * 0.2;
-                    // Left contrail
-                    ctx.beginPath();
-                    ctx.moveTo(cs1.x + sinC*5, cs1.y - cosC*5);
-                    ctx.lineTo(cs2.x + sinC*5, cs2.y - cosC*5);
-                    ctx.strokeStyle = 'rgba(200,210,230,'+ca+')';
-                    ctx.stroke();
-                    // Right contrail
-                    ctx.beginPath();
-                    ctx.moveTo(cs1.x - sinC*5, cs1.y + cosC*5);
-                    ctx.lineTo(cs2.x - sinC*5, cs2.y + cosC*5);
-                    ctx.stroke();
-                }
+                ctx.lineWidth=0.5;
+                ctx.lineCap='round';
+                ctx.strokeStyle='rgba(200,210,230,'+(alpha*0.12)+')';
+                ctx.beginPath();
+                ctx.moveTo(hp.x+sinA*5,hp.y-cosA*5);
+                ctx.lineTo(bp.x+sinA*3,bp.y-cosA*3);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(hp.x-sinA*5,hp.y+cosA*5);
+                ctx.lineTo(bp.x-sinA*3,bp.y+cosA*3);
+                ctx.stroke();
                 ctx.restore();
             }
 
             // ---- Airplane shadow ----
+            var altP=state.progress<0.15?state.progress/0.15:state.progress>0.85?(1-state.progress)/0.15:1;
+            var altLen=18*altP*alpha;
             ctx.save();
-            ctx.translate(hp.x + 3, hp.y + 8 + altLineLen * 0.3);
+            ctx.translate(hp.x+2,hp.y+6+altLen*0.3);
             ctx.rotate(angle);
-            ctx.scale(0.85, 0.4);
+            ctx.scale(0.8,0.35);
             ctx.beginPath();
-            ctx.moveTo(10,0); ctx.lineTo(-6,0);
-            ctx.moveTo(2,0);  ctx.lineTo(-3,-7);
-            ctx.moveTo(2,0);  ctx.lineTo(-3,7);
-            ctx.strokeStyle = 'rgba(0,0,0,'+(alpha*0.15)+')';
-            ctx.lineWidth = 2;
-            ctx.lineCap = 'round';
-            ctx.stroke();
+            ctx.moveTo(10,0);ctx.lineTo(-6,0);
+            ctx.moveTo(2,0);ctx.lineTo(-3,-7);
+            ctx.moveTo(2,0);ctx.lineTo(-3,7);
+            ctx.strokeStyle='rgba(0,0,0,'+(alpha*0.12)+')';
+            ctx.lineWidth=2;ctx.lineCap='round';ctx.stroke();
             ctx.restore();
 
             // ---- Airplane ----
             ctx.save();
             ctx.translate(hp.x,hp.y);
             ctx.rotate(angle);
-
             ctx.beginPath();
-            ctx.moveTo(10,0); ctx.lineTo(-6,0);
-            ctx.moveTo(2,0);  ctx.lineTo(-3,-7);
-            ctx.moveTo(2,0);  ctx.lineTo(-3,7);
-            ctx.moveTo(-6,0); ctx.lineTo(-8,-4);
-            ctx.moveTo(-6,0); ctx.lineTo(-8,4);
+            ctx.moveTo(10,0);ctx.lineTo(-6,0);
+            ctx.moveTo(2,0);ctx.lineTo(-3,-7);
+            ctx.moveTo(2,0);ctx.lineTo(-3,7);
+            ctx.moveTo(-6,0);ctx.lineTo(-8,-4);
+            ctx.moveTo(-6,0);ctx.lineTo(-8,4);
             ctx.strokeStyle='hsla('+h+','+(s+5)+'%,'+(l+25)+'%,'+alpha+')';
-            ctx.lineWidth=1.5;
-            ctx.lineCap='round';
-            ctx.stroke();
-
+            ctx.lineWidth=1.5;ctx.lineCap='round';ctx.stroke();
             ctx.beginPath();
             ctx.arc(10,0,1.2,0,Math.PI*2);
             ctx.fillStyle='hsla('+h+','+(s+10)+'%,'+(l+30)+'%,'+alpha+')';
             ctx.fill();
 
-            // ---- Blinking navigation lights ----
+            // Nav lights
             var blink=(Math.sin(now*0.018)>0.65)?1:0.18;
-            ctx.beginPath();
-            ctx.arc(-3,-7,1.5,0,Math.PI*2);
-            ctx.fillStyle='rgba(255,75,75,'+(alpha*blink)+')';
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(-3,7,1.5,0,Math.PI*2);
-            ctx.fillStyle='rgba(75,255,175,'+(alpha*blink)+')';
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(-7,0,1,0,Math.PI*2);
-            ctx.fillStyle='rgba(255,255,255,'+(alpha*(0.35+blink*0.55))+')';
-            ctx.fill();
+            ctx.beginPath();ctx.arc(-3,-7,1.5,0,Math.PI*2);
+            ctx.fillStyle='rgba(255,75,75,'+(alpha*blink)+')';ctx.fill();
+            ctx.beginPath();ctx.arc(-3,7,1.5,0,Math.PI*2);
+            ctx.fillStyle='rgba(75,255,175,'+(alpha*blink)+')';ctx.fill();
+            ctx.beginPath();ctx.arc(-7,0,1,0,Math.PI*2);
+            ctx.fillStyle='rgba(255,255,255,'+(alpha*(0.35+blink*0.55))+')';ctx.fill();
             ctx.restore();
         },
 
