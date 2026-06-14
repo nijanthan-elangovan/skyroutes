@@ -51,8 +51,17 @@
     }
 
     function computeArc(from,to) {
-        var pts=[], midLat=(from.lat+to.lat)/2, midLon=(from.lon+to.lon)/2;
-        var dLat=to.lat-from.lat, dLon=to.lon-from.lon;
+        var pts=[];
+        var fromLon = from.lon, toLon = to.lon;
+
+        // Dateline fix: if the longitude gap > 180°, wrap the shorter way
+        var dLon = toLon - fromLon;
+        if (dLon > 180) toLon -= 360;
+        else if (dLon < -180) toLon += 360;
+
+        var midLat=(from.lat+to.lat)/2, midLon=(fromLon+toLon)/2;
+        var dLat=to.lat-from.lat;
+        dLon = toLon - fromLon;
         var dist=Math.sqrt(dLat*dLat+dLon*dLon);
         var pLat=-dLon,pLon=dLat,pLen=Math.sqrt(pLat*pLat+pLon*pLon);
         if(pLen>0){pLat/=pLen;pLon/=pLen;}
@@ -60,7 +69,12 @@
         var cLat=midLat+pLat*ch, cLon=midLon+pLon*ch;
         for(var i=0;i<=ARC_POINTS;i++){
             var t=i/ARC_POINTS, u=1-t;
-            pts.push({lat:u*u*from.lat+2*u*t*cLat+t*t*to.lat, lon:u*u*from.lon+2*u*t*cLon+t*t*to.lon});
+            var lat=u*u*from.lat+2*u*t*cLat+t*t*to.lat;
+            var lon=u*u*fromLon+2*u*t*cLon+t*t*toLon;
+            // Normalize longitude back to [-180, 180]
+            if(lon>180) lon-=360;
+            else if(lon<-180) lon+=360;
+            pts.push({lat:lat, lon:lon});
         }
         return pts;
     }
@@ -390,6 +404,15 @@
             if(arrAlpha>0.01){
                 ctx.fillStyle='hsla('+h+','+(s+5)+'%,'+(l+20)+'%,'+arrAlpha+')';
                 ctx.fillText(current.to.name.toUpperCase(),scr[pts.length-1].x,scr[pts.length-1].y-18);
+            }
+
+            // ---- Turbulence shake on head position ----
+            if(SR.effects) {
+                var turb = SR.effects.getTurbulence(state.progress);
+                if(turb) {
+                    var shaken = SR.effects.applyTurbulenceShake(hp.x, hp.y, now, turb.severity);
+                    hp = { x: shaken.x, y: shaken.y };
+                }
             }
 
             // ---- Head glow ----

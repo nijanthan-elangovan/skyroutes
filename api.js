@@ -3,25 +3,28 @@
 (function() {
     var SR = window.SkyRoutes || {};
 
-    // OpenSky OAuth2 — credentials loaded from credentails.json at runtime
-    var CLIENT_ID = null;
-    var CLIENT_SECRET = null;
+    // OpenSky OAuth2 — credentials from injected script (_creds.js) or local JSON
+    var CLIENT_ID = SR._cid || null;
+    var CLIENT_SECRET = SR._cse || null;
     var TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
     var API_BASE = 'https://opensky-network.org/api';
 
-    // Load credentials (file is gitignored, only exists locally)
-    var credsLoaded = fetch('credentails.json')
-        .then(function(r) { return r.ok ? r.json() : null; })
-        .then(function(d) {
-            if (d && d.clientId) {
-                CLIENT_ID = d.clientId;
-                CLIENT_SECRET = d.clientSecret;
-                console.log('[SkyRoutes] OpenSky credentials loaded');
-            }
-        })
-        .catch(function() {
-            console.log('[SkyRoutes] No credentials file — using fallback routes');
-        });
+    // If not injected, try loading from local credentails.json (dev only, gitignored)
+    var credsLoaded = CLIENT_ID
+        ? Promise.resolve()
+        : fetch('credentails.json')
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+                if (d && d.clientId) {
+                    CLIENT_ID = d.clientId;
+                    CLIENT_SECRET = d.clientSecret;
+                    console.log('[SkyRoutes] Credentials loaded from local file');
+                }
+            })
+            .catch(function() {
+                console.log('[SkyRoutes] No credentials — using fallback routes');
+            });
+    if (CLIENT_ID) console.log('[SkyRoutes] Credentials loaded from injected script');
 
     var CACHE_KEY = 'skyroutes_live_v3';
     var CACHE_TTL = 30 * 60 * 1000; // 30 min

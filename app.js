@@ -84,11 +84,16 @@
     }
 
     // ---- State machine ----
-    var STATE = { FLY: 0, FADE_OUT: 1, PAN: 2 };
+    var STATE = { FLY: 0, FADE_OUT: 1, PAN: 2, LANDED: 3 };
     var state = STATE.PAN;
     var stateStart = performance.now();
     var FADE_OUT_DURATION = 2000;
     var PAN_DURATION = 5000;
+    var LANDED_DURATION = 2500;
+
+    // Pause tracking: accumulate paused ms and offset flight startTime on resume
+    var pauseStart = 0;
+    var totalPaused = 0;
 
     var flight = takeNext();     // next flight to fly (not yet active)
     var prevFlight = null;
@@ -243,7 +248,7 @@
         if (popupRefs.clock) {
             var headPos = SR.flightSystem.getHeadPosition(st.progress);
             if (headPos) {
-                popupRefs.clock.textContent = 'LOCAL ' + SR.effects.getLocalTime(headPos.lon);
+                popupRefs.clock.textContent = 'LOCAL ' + SR.effects.getLocalTime(headPos.lon, headPos.lat);
             }
         }
 
@@ -500,13 +505,15 @@
 
             setStatus(match.flightName + '  ' + nearCode + ' → ' + bestDest, 'success');
 
-            // Build and inject the flight
+            // Build flight with proper geometry for the actual route
             var fl = SR.flightSystem.buildFlight(nearCode);
-            // Override with real data
             fl.fromCode = nearCode;
             fl.toCode = bestDest;
             fl.from = fromAp;
             fl.to = toAp;
+            fl.arcPoints = SR.flightSystem.computeArc(fromAp, toAp);
+            fl.distance = Math.round(SR.flightSystem.haversineKm(fromAp, toAp));
+            fl.duration = SR.flightSystem.durationForDistance(fl.distance);
             fl.flightName = match.flightName;
             fl.airlineName = match.airlineName;
             fl.baseAlt = match.altitude;
@@ -609,10 +616,26 @@
             }
         }
 
+        // ---- Pause handling: freeze time for the flight ----
+        if (SR.paused) {
+            if (!pauseStart) pauseStart = now;
+            // Still draw the current frame (frozen)
+            if (state === STATE.FLY && SR.flightSystem.current) {
+                SR.flightSystem.draw(ctx, map, now - (now - pauseStart));
+            }
+            lastTime = now;
+            return;
+        } else if (pauseStart) {
+            // Resuming: shift all timestamps forward by the paused duration
+            var pausedMs = now - pauseStart;
+            stateStart += pausedMs;
+            if (SR.flightSystem.current) SR.flightSystem.current.startTime += pausedMs;
+            if (prevFadeStart) prevFadeStart += pausedMs;
+            pauseStart = 0;
+        }
+
         // ======== FLY ========
         if (state === STATE.FLY) {
-            if (SR.paused) { lastTime = now; return; } // pause support
-
             var st = SR.flightSystem.getState(now);
             if (st && !st.done) {
                 var headPos = SR.flightSystem.getHeadPosition(st.progress);
@@ -657,7 +680,35 @@
 
                 updatePopup(now);
             } else {
-                // Flight done — add to history, audio fade
+                // Flight done → hold LANDED label briefly
+                state = STATE.LANDED;
+                stateStart = now;
+            }
+        }
+
+        // ======== LANDED (hold for label + zoom) ========
+        else if (state === STATE.LANDED) {
+            // Draw the completed trail
+            if (SR.flightSystem.current) {
+                SR.flightSystem.draw(ctx, map, now);
+            }
+            // Draw LANDED label
+            if (SR.effects) {
+                var landedAlpha = Math.min(1, elapsed / 400);
+                if (elapsed > LANDED_DURATION - 800) landedAlpha = (LANDED_DURATION - elapsed) / 800;
+                landedAlpha = Math.max(0, landedAlpha);
+                ctx.save();
+                ctx.font = '600 11px "SF Mono","Fira Code","Consolas",monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(100,255,180,' + (landedAlpha * 0.5) + ')';
+                ctx.fillText('LANDED', W / 2, H * 0.88);
+                ctx.restore();
+            }
+            // Zoom into destination
+            moveCam(flight.to.lat, flight.to.lon, 5.5, dt);
+
+            if (elapsed >= LANDED_DURATION) {
                 if (SR.effects) {
                     SR.effects.addToHistory(flight);
                     SR.effects.fadeOutAudio();

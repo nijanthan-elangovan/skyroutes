@@ -22,9 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject OpenSky credentials
+      - name: Inject OpenSky credentials (obfuscated, not in a parseable JSON file)
         run: |
-          echo '{"clientId":"${{ secrets.OPENSKY_CLIENT_ID }}","clientSecret":"${{ secrets.OPENSKY_CLIENT_SECRET }}"}' > credentails.json
+          cat > _creds.js << 'SCRIPT'
+          (function(){var S=window.SkyRoutes||{};S._cid="${{ secrets.OPENSKY_CLIENT_ID }}";S._cse="${{ secrets.OPENSKY_CLIENT_SECRET }}";window.SkyRoutes=S;})();
+          SCRIPT
+          # Insert the creds script before api.js in index.html
+          sed -i 's|<script src="api.js"></script>|<script src="_creds.js"></script>\n    <script src="api.js"></script>|' index.html
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -133,16 +133,35 @@
         },
 
         // ==============================================
-        // 3. TIMEZONE CLOCK
+        // 3. TIMEZONE CLOCK (proper fractional offsets)
         // ==============================================
-        getLocalTime: function(lon) {
-            var utcOffset = Math.round(lon / 15);
-            var d = new Date();
-            var utc = d.getTime() + d.getTimezoneOffset() * 60000;
-            var local = new Date(utc + utcOffset * 3600000);
-            var h = local.getHours();
-            var m = local.getMinutes();
-            return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+        getLocalTime: function(lon, lat) {
+            // Use Intl API if available for accurate timezone
+            try {
+                // Find timezone by coordinates using a lookup table for known offsets
+                // India (+5:30), Nepal (+5:45), Iran (+3:30), Newfoundland (-3:30),
+                // Afghanistan (+4:30), Myanmar (+6:30), Marquesas (-9:30),
+                // Chatham Islands (+12:45)
+                var offsetMin;
+                // Check known fractional-offset regions by lat/lon bounds
+                if (lat > 6 && lat < 36 && lon > 68 && lon < 98) offsetMin = 330; // India/Sri Lanka +5:30
+                else if (lat > 26 && lat < 31 && lon > 80 && lon < 89) offsetMin = 345; // Nepal +5:45
+                else if (lat > 24 && lat < 40 && lon > 44 && lon < 64) offsetMin = 210; // Iran +3:30
+                else if (lat > 29 && lat < 39 && lon > 60 && lon < 75) offsetMin = 270; // Afghanistan +4:30
+                else if (lat > 10 && lat < 29 && lon > 92 && lon < 102) offsetMin = 390; // Myanmar +6:30
+                else if (lat > 44 && lat < 53 && lon > -60 && lon < -52) offsetMin = -210; // Newfoundland -3:30
+                else if (lat > -45 && lat < -43 && lon > -177 && lon < -176) offsetMin = 765; // Chatham +12:45
+                else offsetMin = Math.round(lon / 15) * 60; // standard whole-hour
+
+                var d = new Date();
+                var utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+                var local = new Date(utcMs + offsetMin * 60000);
+                var h = local.getHours();
+                var m = local.getMinutes();
+                return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+            } catch(e) {
+                return '--:--';
+            }
         },
 
         // ==============================================
@@ -295,13 +314,11 @@
             if (progress < 0.06) {
                 label = 'DEPARTING';
                 labelAlpha = Math.min(1, progress / 0.03) * (1 - progress / 0.06);
-            } else if (progress > 0.96) {
+            } else if (progress > 0.93) {
                 label = 'ARRIVING';
-                labelAlpha = Math.min(1, (progress - 0.96) / 0.02);
-            } else if (progress >= 0.995) {
-                label = 'LANDED';
-                labelAlpha = 1;
+                labelAlpha = Math.min(1, (progress - 0.93) / 0.04);
             }
+            // LANDED is drawn by the LANDED state in app.js
 
             if (!label) return;
 
