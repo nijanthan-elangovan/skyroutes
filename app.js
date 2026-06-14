@@ -249,14 +249,123 @@
     SR.fetchRoutes().then(function(routes) { SR.flightSystem.setRoutes(routes); fillQueue(); });
 
     // =======================================
-    // 3D VIEW TOGGLE
+    // 3D VIEW SYSTEM
     // =======================================
     var viewBtn = document.getElementById('view-btn');
+    var horizonGlow = document.getElementById('horizon-glow');
+    var sceneWrapper = document.getElementById('scene-wrapper');
     var is3D = false;
+    var auto3D = false; // auto-toggle based on altitude
+    var userToggled3D = false; // true if user manually toggled
+
+    // 3D camera state (smoothly interpolated each frame)
+    var cam3d = {
+        tiltX: 0,       // current rotateX degrees
+        orbitY: 0,       // current rotateY degrees (auto-orbit)
+        scale: 1,
+        translateY: 0,   // percent
+        perspOriginX: 50, // percent
+        perspOriginY: 35, // percent
+        // Targets
+        targetTiltX: 0,
+        targetOrbitY: 0,
+        targetScale: 1,
+        targetTranslateY: 0,
+        targetPerspX: 50,
+        targetPerspY: 35
+    };
+
+    var TILT_3D = 48;       // degrees when 3D is on
+    var SCALE_3D = 1.3;
+    var TRANSLATE_Y_3D = 10; // percent
+
     viewBtn.addEventListener('click', function() {
+        userToggled3D = true;
         is3D = !is3D;
         document.body.classList.toggle('view-3d', is3D);
     });
+
+    function update3DCamera(now, dt) {
+        var t = now * 0.001; // seconds
+
+        // ---- Auto-3D during cruise (altitude > 25000 ft) ----
+        if (!userToggled3D && state === STATE.FLY && SR.flightSystem.current) {
+            var st = SR.flightSystem.getState(now);
+            if (st) {
+                var live = SR.flightSystem.getLiveStats(st.progress);
+                var shouldBe3D = live.altitude > 25000;
+                if (shouldBe3D !== auto3D) {
+                    auto3D = shouldBe3D;
+                    is3D = auto3D;
+                    document.body.classList.toggle('view-3d', is3D);
+                }
+            }
+        }
+
+        if (is3D) {
+            // Auto-orbit: slow rotation
+            cam3d.targetOrbitY = Math.sin(t * 0.04) * 8; // ±8 degrees
+
+            // Flight-aware tilt direction
+            if (flight && state === STATE.FLY) {
+                // Compute bearing from departure to destination
+                var dLon = flight.to.lon - flight.from.lon;
+                var dLat = flight.to.lat - flight.from.lat;
+                // Shift perspective-origin toward the destination
+                var bearingDeg = Math.atan2(dLon, dLat) * 180 / Math.PI;
+                cam3d.targetPerspX = 50 + Math.sin(bearingDeg * Math.PI / 180) * 15;
+                cam3d.targetPerspY = 35 - Math.cos(bearingDeg * Math.PI / 180) * 10;
+            } else {
+                cam3d.targetPerspX = 50;
+                cam3d.targetPerspY = 35;
+            }
+
+            cam3d.targetTiltX = TILT_3D;
+            cam3d.targetScale = SCALE_3D;
+            cam3d.targetTranslateY = TRANSLATE_Y_3D;
+        } else {
+            cam3d.targetTiltX = 0;
+            cam3d.targetOrbitY = 0;
+            cam3d.targetScale = 1;
+            cam3d.targetTranslateY = 0;
+            cam3d.targetPerspX = 50;
+            cam3d.targetPerspY = 35;
+        }
+
+        // Smooth interpolation
+        var ease = 0.0012 * dt;
+        cam3d.tiltX += (cam3d.targetTiltX - cam3d.tiltX) * ease;
+        cam3d.orbitY += (cam3d.targetOrbitY - cam3d.orbitY) * ease;
+        cam3d.scale += (cam3d.targetScale - cam3d.scale) * ease;
+        cam3d.translateY += (cam3d.targetTranslateY - cam3d.translateY) * ease;
+        cam3d.perspOriginX += (cam3d.targetPerspX - cam3d.perspOriginX) * ease;
+        cam3d.perspOriginY += (cam3d.targetPerspY - cam3d.perspOriginY) * ease;
+
+        // Apply
+        var perspVal = is3D ? 900 : 0;
+        document.body.style.perspective = is3D ? '900px' : 'none';
+        document.body.style.perspectiveOrigin =
+            cam3d.perspOriginX.toFixed(1) + '% ' + cam3d.perspOriginY.toFixed(1) + '%';
+
+        sceneWrapper.style.transform =
+            'rotateX(' + cam3d.tiltX.toFixed(2) + 'deg) ' +
+            'rotateY(' + cam3d.orbitY.toFixed(2) + 'deg) ' +
+            'scale(' + cam3d.scale.toFixed(3) + ') ' +
+            'translateY(' + cam3d.translateY.toFixed(2) + '%)';
+
+        // Horizon glow: position + color match flight color
+        if (is3D && flight) {
+            var c = flight.color;
+            horizonGlow.style.background = 'linear-gradient(90deg,' +
+                'transparent 10%,' +
+                'hsla(' + c.h + ',' + c.s + '%,' + c.l + '%,0.12) 30%,' +
+                'hsla(' + c.h + ',' + c.s + '%,' + (c.l+10) + '%,0.22) 50%,' +
+                'hsla(' + c.h + ',' + c.s + '%,' + c.l + '%,0.12) 70%,' +
+                'transparent 90%)';
+            // Position glow at ~15% from top (where tilted horizon appears)
+            horizonGlow.style.top = '12%';
+        }
+    }
 
     // =======================================
     // TRACK PANEL (easter egg)
@@ -430,6 +539,9 @@
 
         if (cloudRenderer) cloudRenderer.render(now);
         ctx.clearRect(0, 0, W, H);
+
+        // 3D camera orbit/tilt
+        update3DCamera(now, dt);
 
         // ---- Fading-out previous flight trail ----
         if (prevFlight) {
