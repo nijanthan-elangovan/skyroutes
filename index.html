@@ -8,13 +8,16 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div id="map"></div>
-    <canvas id="cloud-canvas"></canvas>
-    <canvas id="flight-canvas"></canvas>
-    <div id="labels-overlay"></div>
+    <div id="scene-wrapper">
+        <div id="map"></div>
+        <canvas id="cloud-canvas"></canvas>
+        <canvas id="flight-canvas"></canvas>
+        <div id="labels-overlay"></div>
+    </div>
 
-    <!-- Easter egg: track a real flight -->
+    <!-- Controls -->
     <div id="egg-btn" title="Track a flight">✈</div>
+    <div id="view-btn" title="Toggle 3D view">3D</div>
     <div id="track-panel">
         <div class="tp-header">
             <span class="tp-title">TRACK FLIGHT</span>

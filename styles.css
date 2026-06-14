@@ -45,6 +45,38 @@ body::after {
     to   { background-position: 194px 226px, -265px 419px; }
 }
 
+/* ---- 3D scene wrapper ---- */
+#scene-wrapper {
+    position: fixed;
+    inset: 0;
+    transform-style: preserve-3d;
+    transition: transform 1.8s cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: center 70%;
+    will-change: transform;
+}
+body.view-3d {
+    perspective: 900px;
+    perspective-origin: 50% 35%;
+}
+body.view-3d #scene-wrapper {
+    transform: rotateX(52deg) scale(1.35) translateY(8%);
+}
+/* Horizon fade in 3D mode */
+body.view-3d #scene-wrapper::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 35%;
+    background: linear-gradient(to bottom, rgba(5,5,8,0.95) 0%, transparent 100%);
+    z-index: 40;
+    pointer-events: none;
+}
+/* Popup needs counter-rotation in 3D so it stays readable */
+body.view-3d .flight-popup-inner {
+    transform: rotateX(-30deg);
+    transform-origin: bottom center;
+}
+
 #map {
     position: fixed;
     inset: 0;
@@ -256,18 +288,15 @@ body::after {
     white-space: nowrap;
 }
 
-/* ---- Easter egg button ---- */
-#egg-btn {
+/* ---- Control buttons (top-right) ---- */
+#egg-btn, #view-btn {
     position: fixed;
-    top: 18px;
-    right: 18px;
     z-index: 50;
     width: 28px;
     height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
     color: rgba(255,255,255,0.08);
     cursor: pointer;
     border-radius: 50%;
@@ -276,9 +305,22 @@ body::after {
     user-select: none;
     background: transparent;
 }
-#egg-btn:hover {
+#egg-btn { top: 18px; right: 18px; font-size: 12px; }
+#view-btn {
+    top: 52px;
+    right: 18px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+#egg-btn:hover, #view-btn:hover {
     color: rgba(255,255,255,0.5);
     background: rgba(255,255,255,0.04);
+}
+body.view-3d #view-btn {
+    color: rgba(100,180,255,0.4);
+    background: rgba(100,180,255,0.06);
 }
 
 /* ---- Track panel (slides from right) ---- */

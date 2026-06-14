@@ -249,6 +249,16 @@
     SR.fetchRoutes().then(function(routes) { SR.flightSystem.setRoutes(routes); fillQueue(); });
 
     // =======================================
+    // 3D VIEW TOGGLE
+    // =======================================
+    var viewBtn = document.getElementById('view-btn');
+    var is3D = false;
+    viewBtn.addEventListener('click', function() {
+        is3D = !is3D;
+        document.body.classList.toggle('view-3d', is3D);
+    });
+
+    // =======================================
     // TRACK PANEL (easter egg)
     // =======================================
     var panel = document.getElementById('track-panel');
