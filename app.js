@@ -6,14 +6,15 @@
     var map = L.map('map', {
         center: [30, 0], zoom: 3,
         minZoom: 2, maxZoom: 8,
-        zoomControl: false, attributionControl: false,
+        zoomControl: false, attributionControl: true,
         keyboard: false, dragging: false,
         scrollWheelZoom: false, doubleClickZoom: false,
         touchZoom: false, boxZoom: false
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd', maxZoom: 19
+        subdomains: 'abcd', maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
     }).addTo(map);
 
     SR.addAirportMarkers(map);
@@ -50,8 +51,9 @@
         if (!document.fullscreenElement && wakeLock) wakeLock.release();
     });
 
-    // Clouds disabled
-    var cloudRenderer = null;
+    var reducedMotionMq = matchMedia('(prefers-reduced-motion: reduce)');
+    var reducedMotion = reducedMotionMq.matches;
+    reducedMotionMq.addEventListener('change', function(e) { reducedMotion = e.matches; });
 
     // ---- Flight queue: pre-build 3 flights (doesn't touch flightSystem.current) ----
     var queue = [];
@@ -70,17 +72,31 @@
     var cam = { lat: 30, lon: 0, zoom: 3 };
     var EASE = 0.0015;
     function moveCam(tLat, tLon, tZoom, dt) {
+        while (tLon - cam.lon > 180) tLon -= 360;
+        while (tLon - cam.lon < -180) tLon += 360;
+        if (reducedMotion) dt = Math.max(dt, 1000);
         cam.lat += (tLat - cam.lat) * EASE * dt;
         cam.lon += (tLon - cam.lon) * EASE * dt;
         cam.zoom += (tZoom - cam.zoom) * EASE * dt;
         map.setView([cam.lat, cam.lon], cam.zoom, { animate: false });
     }
     function zoomForRoute(from, to) {
-        var sp = Math.max(Math.abs(to.lat - from.lat), Math.abs(to.lon - from.lon));
+        var lonSpan = Math.abs(to.lon - from.lon);
+        if (lonSpan > 180) lonSpan = 360 - lonSpan;
+        var sp = Math.max(Math.abs(to.lat - from.lat), lonSpan);
         if (sp > 150) return 2.5;  if (sp > 120) return 2.8;
         if (sp > 80) return 3.2;   if (sp > 50) return 3.6;
         if (sp > 30) return 4;     if (sp > 15) return 4.5;
         return 5;
+    }
+
+    function alignFlightToCamera(fl) {
+        var shift = Math.round((cam.lon - fl.arcPoints[0].lon) / 360) * 360;
+        if (!shift) return fl;
+        for (var i = 0; i < fl.arcPoints.length; i++) {
+            fl.arcPoints[i].lon += shift;
+        }
+        return fl;
     }
 
     // ---- State machine ----
@@ -93,9 +109,7 @@
 
     // Pause tracking: accumulate paused ms and offset flight startTime on resume
     var pauseStart = 0;
-    var totalPaused = 0;
-
-    var flight = takeNext();     // next flight to fly (not yet active)
+    var flight = alignFlightToCamera(takeNext()); // next flight to fly (not yet active)
     var prevFlight = null;
     var prevFadeStart = 0;
 
@@ -108,11 +122,17 @@
     var popupX = 0, popupY = 0;
     var POP_EASE = 0.06;
 
+    function escapeHTML(value) {
+        return String(value).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+        });
+    }
+
     function splitFlapHTML(text) {
         var html = '';
         for (var i = 0; i < text.length; i++) {
             if (text[i] === ' ') html += '<span style="width:6px;display:inline-block"></span>';
-            else html += '<span class="fp-flap">' + text[i] + '</span>';
+            else html += '<span class="fp-flap">' + escapeHTML(text[i]) + '</span>';
         }
         return html;
     }
@@ -127,7 +147,7 @@
     function scheduleSplitFlap(fn, delay) {
         var timer = setTimeout(function() {
             splitFlapTimeouts = splitFlapTimeouts.filter(function(id) { return id !== timer; });
-            fn();
+            if (!SR.paused) fn();
         }, delay);
         splitFlapTimeouts.push(timer);
     }
@@ -141,8 +161,9 @@
         el.className = 'flight-popup';
         el.innerHTML =
             '<div class="flight-popup-inner">' +
-              '<div class="fp-airline">' + fl.airlineName + '</div>' +
-              '<div class="fp-flight" style="color:' + acc + '">' + fl.flightName + '</div>' +
+              '<div class="fp-airline">' + escapeHTML(fl.airlineName) + '</div>' +
+              '<div class="fp-flight" style="color:' + acc + '">' + escapeHTML(fl.flightName) + '</div>' +
+              '<div class="fp-status">' + escapeHTML(fl.dataStatus) + '</div>' +
               '<div class="fp-splitflap">' +
                 '<div class="fp-flap-group" id="fp-origin">' + splitFlapHTML(fl.fromCode) + '</div>' +
                 '<span class="fp-flap-arrow">→</span>' +
@@ -174,7 +195,7 @@
         popupRefs.bar.style.background = acc;
 
         // Init turbulence zones for this flight
-        if (SR.effects) SR.effects.initTurbulence(fl.arcPoints.length);
+        if (SR.effects) SR.effects.initTurbulence();
 
         var startPx = map.latLngToContainerPoint(L.latLng(fl.from.lat, fl.from.lon));
         popupX = startPx.x + 24;
@@ -211,8 +232,10 @@
             animateGroup(el.querySelector('#fp-dest'), fl.toCode, 220);
         }
 
-        setTimeout(animateSplitFlap, 100);
-        splitFlapTimer = setInterval(animateSplitFlap, 5000);
+        if (!reducedMotion) {
+            setTimeout(animateSplitFlap, 100);
+            splitFlapTimer = setInterval(animateSplitFlap, 5000);
+        }
     }
 
     function updatePopup(now) {
@@ -248,7 +271,7 @@
         if (popupRefs.clock) {
             var headPos = SR.flightSystem.getHeadPosition(st.progress);
             if (headPos) {
-                popupRefs.clock.textContent = 'LOCAL ' + SR.effects.getLocalTime(headPos.lon, headPos.lat);
+                popupRefs.clock.textContent = 'SOLAR ' + SR.effects.getLocalTime(headPos.lon, headPos.lat);
             }
         }
 
@@ -264,7 +287,7 @@
         }
 
         // Audio
-        if (SR.effects) SR.effects.updateAudio(st.progress, live.speed, live.altitude);
+        if (SR.effects) SR.effects.updateAudio(st.progress, live.speed);
     }
 
     function fadeOutPopup() {
@@ -278,6 +301,7 @@
 
     // ---- Skip to next (for keyboard shortcut) ----
     SR.skipToNext = function() {
+        if (SR.paused) return;
         if (state === STATE.FLY) {
             if (SR.effects) {
                 SR.effects.addToHistory(flight);
@@ -286,7 +310,7 @@
             fadeOutPopup();
             prevFlight = flight;
             prevFadeStart = performance.now();
-            flight = takeNext();
+            flight = alignFlightToCamera(takeNext());
             fillQueue();
             state = STATE.FADE_OUT;
             stateStart = performance.now();
@@ -331,9 +355,15 @@
         userToggled3D = true;
         is3D = !is3D;
         document.body.classList.toggle('view-3d', is3D);
+        viewBtn.setAttribute('aria-pressed', String(is3D));
     });
 
     function update3DCamera(now, dt) {
+        if (reducedMotion) {
+            is3D = false;
+            document.body.classList.remove('view-3d');
+            viewBtn.setAttribute('aria-pressed', 'false');
+        }
         var t = now * 0.001; // seconds
 
         // ---- Auto-3D during cruise (altitude > 25000 ft) ----
@@ -358,6 +388,8 @@
             if (flight && state === STATE.FLY) {
                 // Compute bearing from departure to destination
                 var dLon = flight.to.lon - flight.from.lon;
+                if (dLon > 180) dLon -= 360;
+                if (dLon < -180) dLon += 360;
                 var dLat = flight.to.lat - flight.from.lat;
                 // Shift perspective-origin toward the destination
                 var bearingDeg = Math.atan2(dLon, dLat) * 180 / Math.PI;
@@ -390,7 +422,6 @@
         cam3d.perspOriginY += (cam3d.targetPerspY - cam3d.perspOriginY) * ease;
 
         // Apply
-        var perspVal = is3D ? 900 : 0;
         document.body.style.perspective = is3D ? '900px' : 'none';
         document.body.style.perspectiveOrigin =
             cam3d.perspOriginX.toFixed(1) + '% ' + cam3d.perspOriginY.toFixed(1) + '%';
@@ -429,11 +460,23 @@
     var tpStatus = document.getElementById('tp-status');
 
     eggBtn.addEventListener('click', function() {
-        panel.classList.toggle('open');
+        setPanelOpen(!panel.classList.contains('open'));
     });
     tpClose.addEventListener('click', function() {
-        panel.classList.remove('open');
+        setPanelOpen(false);
     });
+    panel.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') setPanelOpen(false);
+    });
+
+    function setPanelOpen(open) {
+        panel.classList.toggle('open', open);
+        panel.setAttribute('aria-hidden', String(!open));
+        panel.inert = !open;
+        eggBtn.setAttribute('aria-expanded', String(open));
+        if (open) tpFlightInput.focus();
+        else eggBtn.focus();
+    }
 
     function setStatus(msg, type) {
         tpStatus.textContent = msg;
@@ -442,16 +485,18 @@
 
     // Inject a custom flight into the state machine
     function injectFlight(fl) {
+        SR.paused = false;
+        pauseStart = 0;
         fadeOutPopup();
         prevFlight = flight;
         prevFadeStart = performance.now();
-        flight = fl;
+        flight = alignFlightToCamera(fl);
         // Clear queue so it chains from this flight next
         queue = [];
         fillQueue();
         state = STATE.PAN;
         stateStart = performance.now();
-        panel.classList.remove('open');
+        setPanelOpen(false);
     }
 
     // Search by flight number — look in live data
@@ -474,21 +519,18 @@
         }
 
         if (match) {
-            // Find nearest airports for departure (use origin country) and arrival (heading-based guess)
             var nearCode = match.nearAirport;
-            if (!nearCode) {
-                setStatus('Flight found but no nearby airport', 'error');
-                return;
-            }
 
             // Pick a plausible destination — furthest airport in the heading direction
             var bestDest = null, bestScore = -Infinity;
-            var headRad = (match.heading || 0) * Math.PI / 180;
+            var headRad = (match.heading !== null ? match.heading : 0) * Math.PI / 180;
             for (var code in SR.AIRPORTS) {
                 if (code === nearCode) continue;
                 var ap = SR.AIRPORTS[code];
                 var dLat = ap.lat - match.lat;
                 var dLon = ap.lon - match.lon;
+                if (dLon > 180) dLon -= 360;
+                if (dLon < -180) dLon += 360;
                 var dist = Math.sqrt(dLat * dLat + dLon * dLon);
                 if (dist < 5) continue; // too close
                 var angle = Math.atan2(dLon, dLat);
@@ -500,25 +542,28 @@
 
             if (!bestDest) { setStatus('Could not determine route', 'error'); return; }
 
-            var fromAp = SR.getAirport(nearCode);
             var toAp = SR.getAirport(bestDest);
 
-            setStatus(match.flightName + '  ' + nearCode + ' → ' + bestDest, 'success');
+            setStatus(match.flightName + ' reported position, estimated toward ' + bestDest, 'success');
 
             // Build flight with proper geometry for the actual route
-            var fl = SR.flightSystem.buildFlight(nearCode);
-            fl.fromCode = nearCode;
+            var fl = SR.flightSystem.buildFlight();
+            fl.fromCode = 'POS';
             fl.toCode = bestDest;
-            fl.from = fromAp;
+            fl.from = { name: 'Current position', lat: match.lat, lon: match.lon };
             fl.to = toAp;
-            fl.arcPoints = SR.flightSystem.computeArc(fromAp, toAp);
-            fl.distance = Math.round(SR.flightSystem.haversineKm(fromAp, toAp));
+            fl.arcPoints = SR.flightSystem.computeArc(fl.from, toAp);
+            fl.distance = Math.round(SR.flightSystem.haversineKm(fl.from, toAp));
             fl.duration = SR.flightSystem.durationForDistance(fl.distance);
             fl.flightName = match.flightName;
             fl.airlineName = match.airlineName;
-            fl.baseAlt = match.altitude;
-            fl.baseSpeed = match.speed;
-            fl.isLive = true;
+            fl.baseAlt = match.altitude !== null ? match.altitude : 35000;
+            fl.baseSpeed = match.speed !== null ? match.speed : 480;
+            var ageMinutes = match.lastContact ?
+                Math.max(0, Math.round((Date.now() / 1000 - match.lastContact) / 60)) : null;
+            fl.dataStatus = 'REPORTED POSITION' +
+                (ageMinutes !== null ? ' ' + ageMinutes + 'M AGO' : '') +
+                ' / ESTIMATED PATH';
 
             setTimeout(function() { injectFlight(fl); }, 800);
         } else {
@@ -541,8 +586,9 @@
 
         if (!fromAp) { setStatus(from + ' not in airport database', 'error'); return; }
         if (!toAp) { setStatus(to + ' not in airport database', 'error'); return; }
+        if (from === to) { setStatus('Origin and destination must differ', 'error'); return; }
 
-        setStatus('Tracking ' + from + ' → ' + to, 'success');
+        setStatus('Simulating ' + from + ' → ' + to, 'success');
 
         // Build flight for this route with proper arc
         var fl = SR.flightSystem.buildFlight(from);
@@ -554,15 +600,7 @@
         fl.distance = Math.round(SR.flightSystem.haversineKm(fromAp, toAp));
         fl.duration = SR.flightSystem.durationForDistance(fl.distance);
 
-        // Try to find a real flight on this route
-        var real = SR.getRealFlight ? SR.getRealFlight(from) : null;
-        if (real) {
-            fl.flightName = real.flightName;
-            fl.airlineName = real.airlineName;
-            fl.baseAlt = real.altitude;
-            fl.baseSpeed = real.speed;
-            fl.isLive = true;
-        }
+        fl.dataStatus = 'SIMULATED ROUTE';
 
         setTimeout(function() { injectFlight(fl); }, 800);
     });
@@ -581,13 +619,42 @@
     // ---- Main loop ----
     var lastTime = performance.now();
 
+    function drawStaticRoute(fl, alpha) {
+        var pts = fl.arcPoints;
+        var c = fl.color;
+        ctx.beginPath();
+        var first = map.latLngToContainerPoint(L.latLng(pts[0].lat, pts[0].lon));
+        ctx.moveTo(first.x, first.y);
+        for (var i = 1; i < pts.length; i++) {
+            var point = map.latLngToContainerPoint(L.latLng(pts[i].lat, pts[i].lon));
+            ctx.lineTo(point.x, point.y);
+        }
+        ctx.strokeStyle = 'hsla(' + c.h + ',' + c.s + '%,' + c.l + '%,' + alpha + ')';
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+    }
+
     function animate(now) {
         requestAnimationFrame(animate);
-        var dt = Math.min(now - lastTime, 100);
-        lastTime = now;
+        var frameNow = now;
+        var dt = Math.min(frameNow - lastTime, 100);
+        lastTime = frameNow;
+
+        if (SR.paused) {
+            if (!pauseStart) pauseStart = frameNow;
+            now = pauseStart;
+            dt = 0;
+        } else if (pauseStart) {
+            var pausedMs = frameNow - pauseStart;
+            stateStart += pausedMs;
+            if (SR.flightSystem.current) SR.flightSystem.current.startTime += pausedMs;
+            if (prevFadeStart) prevFadeStart += pausedMs;
+            pauseStart = 0;
+        }
+        document.body.classList.toggle('paused', SR.paused);
         var elapsed = now - stateStart;
 
-        if (cloudRenderer) cloudRenderer.render(now);
         ctx.clearRect(0, 0, W, H);
 
         // 3D camera orbit/tilt
@@ -616,24 +683,6 @@
             }
         }
 
-        // ---- Pause handling: freeze time for the flight ----
-        if (SR.paused) {
-            if (!pauseStart) pauseStart = now;
-            // Still draw the current frame (frozen)
-            if (state === STATE.FLY && SR.flightSystem.current) {
-                SR.flightSystem.draw(ctx, map, now - (now - pauseStart));
-            }
-            lastTime = now;
-            return;
-        } else if (pauseStart) {
-            // Resuming: shift all timestamps forward by the paused duration
-            var pausedMs = now - pauseStart;
-            stateStart += pausedMs;
-            if (SR.flightSystem.current) SR.flightSystem.current.startTime += pausedMs;
-            if (prevFadeStart) prevFadeStart += pausedMs;
-            pauseStart = 0;
-        }
-
         // ======== FLY ========
         if (state === STATE.FLY) {
             var st = SR.flightSystem.getState(now);
@@ -653,32 +702,33 @@
 
                     var leadProgress = Math.min(st.progress + Math.min(0.035, (1 - st.progress) * 0.5), 1);
                     var leadPos = SR.flightSystem.getHeadPosition(leadProgress);
-                    moveCam(leadPos.lat, leadPos.lon, camZoom, dt);
+                    if (!reducedMotion) moveCam(leadPos.lat, leadPos.lon, camZoom, dt);
 
                     // Day/night terminator
-                    if (SR.effects) SR.effects.drawTerminator(ctx, map, W, H, now);
+                    if (SR.effects) SR.effects.drawTerminator(ctx, map);
 
                     // City lights near departure (fading out) and arrival (fading in)
-                    if (SR.effects) {
+                    if (SR.effects && !reducedMotion) {
                         var depCityI = Math.max(0, 1 - st.progress / 0.12);
                         var arrCityI = Math.max(0, (st.progress - 0.88) / 0.12);
                         if (depCityI > 0.01)
-                            SR.effects.drawCityLights(ctx, map, flight.from, flight.fromCode, depCityI, st.opacity);
+                            SR.effects.drawCityLights(ctx, map, flight.arcPoints[0], flight.fromCode, depCityI, st.opacity);
                         if (arrCityI > 0.01)
-                            SR.effects.drawCityLights(ctx, map, flight.to, flight.toCode, arrCityI, st.opacity);
+                            SR.effects.drawCityLights(ctx, map, flight.arcPoints[flight.arcPoints.length - 1], flight.toCode, arrCityI, st.opacity);
                     }
 
                     // Aurora borealis
-                    if (SR.effects && headPos.lat > 50)
+                    if (SR.effects && !reducedMotion && headPos.lat > 50)
                         SR.effects.drawAurora(ctx, map, headPos.lat, flight.color, st.opacity, now);
                 }
 
-                SR.flightSystem.draw(ctx, map, now);
+                if (reducedMotion) drawStaticRoute(flight, 0.28);
+                else SR.flightSystem.draw(ctx, map, now);
 
                 // Phase label (DEPARTING / ARRIVING / LANDED)
-                if (SR.effects) SR.effects.drawPhaseLabel(ctx, W, H, st.progress, st.opacity);
+                if (SR.effects && !reducedMotion) SR.effects.drawPhaseLabel(ctx, W, H, st.progress, st.opacity);
 
-                updatePopup(now);
+                if (!reducedMotion) updatePopup(now);
             } else {
                 // Flight done → hold LANDED label briefly
                 state = STATE.LANDED;
@@ -688,10 +738,7 @@
 
         // ======== LANDED (hold for label + zoom) ========
         else if (state === STATE.LANDED) {
-            // Draw the completed trail
-            if (SR.flightSystem.current) {
-                SR.flightSystem.draw(ctx, map, now);
-            }
+            drawStaticRoute(flight, 0.28);
             // Draw LANDED label
             if (SR.effects) {
                 var landedAlpha = Math.min(1, elapsed / 400);
@@ -706,7 +753,8 @@
                 ctx.restore();
             }
             // Zoom into destination
-            moveCam(flight.to.lat, flight.to.lon, 5.5, dt);
+            var routeEnd = flight.arcPoints[flight.arcPoints.length - 1];
+            if (!reducedMotion) moveCam(routeEnd.lat, routeEnd.lon, 5.5, dt);
 
             if (elapsed >= LANDED_DURATION) {
                 if (SR.effects) {
@@ -716,7 +764,7 @@
                 fadeOutPopup();
                 prevFlight = flight;
                 prevFadeStart = now;
-                flight = takeNext();
+                flight = alignFlightToCamera(takeNext());
                 fillQueue();
                 state = STATE.FADE_OUT;
                 stateStart = now;

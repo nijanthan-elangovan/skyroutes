@@ -11,7 +11,7 @@ html, body {
     background: #050508;
     font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
-    cursor: none;
+    cursor: default;
     transition: perspective 1.6s cubic-bezier(0.22,1,0.36,1),
                 perspective-origin 1.6s cubic-bezier(0.22,1,0.36,1);
 }
@@ -130,7 +130,16 @@ body.view-3d .flight-popup-inner {
 }
 
 /* Countries visible but moody */
-.leaflet-control-container { display: none !important; }
+.leaflet-control-container { pointer-events: none; }
+.leaflet-control-attribution {
+    display: block !important;
+    opacity: 0.25;
+    font-size: 7px !important;
+    background: transparent !important;
+    color: #fff !important;
+    pointer-events: auto;
+}
+.leaflet-control-attribution a { color: #fff !important; }
 .leaflet-container { background: #050508 !important; cursor: default !important; }
 .leaflet-tile-pane {
     opacity: 0.3 !important;
@@ -141,12 +150,6 @@ body.view-3d .flight-popup-inner {
     0%   { opacity: 0.25 !important; filter: saturate(0.15) brightness(0.65) hue-rotate(0deg) !important; }
     50%  { opacity: 0.35 !important; filter: saturate(0.25) brightness(0.75) hue-rotate(8deg) !important; }
     100% { opacity: 0.28 !important; filter: saturate(0.2) brightness(0.7) hue-rotate(-5deg) !important; }
-}
-
-#cloud-canvas {
-    position: fixed; inset: 0; z-index: 5;
-    pointer-events: none; opacity: 0;
-    mix-blend-mode: screen; display: none;
 }
 
 #flight-canvas {
@@ -261,7 +264,7 @@ body.view-3d .flight-popup-inner {
     color: rgba(255,255,255,0.08); cursor: pointer;
     border-radius: 50%;
     transition: color 0.5s ease, background 0.5s ease;
-    pointer-events: all; user-select: none; background: transparent;
+    pointer-events: all; user-select: none; background: transparent; border: 0;
 }
 #egg-btn { top: 18px; right: 18px; font-size: 12px; }
 #view-btn {
@@ -293,7 +296,7 @@ body.view-3d #view-btn {
     font-size: 18px; color: rgba(255,255,255,0.2); cursor: pointer;
     width: 28px; height: 28px; display: flex; align-items: center;
     justify-content: center; border-radius: 6px;
-    transition: color 0.2s, background 0.2s;
+    transition: color 0.2s, background 0.2s; border: 0; background: transparent;
 }
 #tp-close:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.05); }
 .tp-section { margin-bottom: 16px; }
@@ -337,7 +340,6 @@ body.view-3d #view-btn {
     opacity: 0.5;
     transition: opacity 0.5s;
 }
-#history-ribbon:hover { opacity: 0.8; }
 .hr-item {
     display: flex;
     flex-direction: column;
@@ -378,6 +380,24 @@ body.view-3d #view-btn {
     margin-bottom: 4px;
 }
 
+.fp-status {
+    font-size: 7px;
+    letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.28);
+    margin-bottom: 5px;
+}
+
+body.paused *, body.paused *::before, body.paused *::after {
+    animation-play-state: paused !important;
+}
+
+#egg-btn:focus-visible, #view-btn:focus-visible, #tp-close:focus-visible,
+.tp-btn:focus-visible, .tp-input:focus-visible {
+    outline: 1px solid rgba(120,190,255,0.75);
+    outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    body::before, .leaflet-tile-pane { animation: none !important; }
+    body::before, .leaflet-tile-pane, .fp-flap { animation: none !important; }
+    *, *::before, *::after { transition-duration: 0.001ms !important; }
 }

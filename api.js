@@ -1,34 +1,12 @@
-// ---- OpenSky OAuth2 + live flight data ----
+// ---- OpenSky anonymous live aircraft data ----
 
 (function() {
     var SR = window.SkyRoutes || {};
 
-    // OpenSky OAuth2 — credentials from injected script (_creds.js) or local JSON
-    var CLIENT_ID = SR._cid || null;
-    var CLIENT_SECRET = SR._cse || null;
-    var TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
     var API_BASE = 'https://opensky-network.org/api';
 
-    // If not injected, try loading from local credentails.json (dev only, gitignored)
-    var credsLoaded = CLIENT_ID
-        ? Promise.resolve()
-        : fetch('credentails.json')
-            .then(function(r) { return r.ok ? r.json() : null; })
-            .then(function(d) {
-                if (d && d.clientId) {
-                    CLIENT_ID = d.clientId;
-                    CLIENT_SECRET = d.clientSecret;
-                    console.log('[SkyRoutes] Credentials loaded from local file');
-                }
-            })
-            .catch(function() {
-                console.log('[SkyRoutes] No credentials — using fallback routes');
-            });
-    if (CLIENT_ID) console.log('[SkyRoutes] Credentials loaded from injected script');
-
-    var CACHE_KEY = 'skyroutes_live_v3';
+    var CACHE_KEY = 'skyroutes_live_v4';
     var CACHE_TTL = 30 * 60 * 1000; // 30 min
-    var TOKEN_KEY = 'skyroutes_token';
 
     // Known ICAO airline prefixes → full names
     var ICAO_AIRLINES = {
@@ -64,62 +42,25 @@
         var airports = SR.AIRPORTS;
         for (var code in airports) {
             var ap = airports[code];
-            var dLat = ap.lat - lat, dLon = ap.lon - lon;
-            var d = dLat * dLat + dLon * dLon;
+            var dLat = (ap.lat - lat) * Math.PI / 180;
+            var dLon = (ap.lon - lon) * Math.PI / 180;
+            var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat * Math.PI / 180) * Math.cos(ap.lat * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            var d = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             if (d < bestDist) { bestDist = d; best = code; }
         }
-        // Only match if within ~3 degrees (~300km)
-        return bestDist < 9 ? best : null;
-    }
-
-    // Get OAuth2 token
-    function getToken() {
-        // Check cached token
-        try {
-            var raw = sessionStorage.getItem(TOKEN_KEY);
-            if (raw) {
-                var t = JSON.parse(raw);
-                if (t.expires > Date.now()) return Promise.resolve(t.access_token);
-            }
-        } catch(e) {}
-
-        var body = 'grant_type=client_credentials&client_id=' +
-            encodeURIComponent(CLIENT_ID) + '&client_secret=' +
-            encodeURIComponent(CLIENT_SECRET);
-
-        return fetch(TOKEN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body,
-            signal: AbortSignal.timeout(10000)
-        })
-        .then(function(res) {
-            if (!res.ok) throw new Error('Token request failed: ' + res.status);
-            return res.json();
-        })
-        .then(function(data) {
-            var token = data.access_token;
-            try {
-                sessionStorage.setItem(TOKEN_KEY, JSON.stringify({
-                    access_token: token,
-                    expires: Date.now() + (data.expires_in - 60) * 1000
-                }));
-            } catch(e) {}
-            console.log('[SkyRoutes] OAuth2 token acquired');
-            return token;
-        });
+        return bestDist < 300 ? best : null;
     }
 
     // Fetch live states from OpenSky
-    function fetchStates(token) {
+    function fetchStates() {
         var url = API_BASE + '/states/all';
-        var headers = {};
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-
-        return fetch(url, {
-            headers: headers,
-            signal: AbortSignal.timeout(20000)
-        })
+        var options = {};
+        if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+            options.signal = AbortSignal.timeout(20000);
+        }
+        return fetch(url, options)
         .then(function(res) {
             if (!res.ok) throw new Error('States API: ' + res.status);
             return res.json();
@@ -143,6 +84,7 @@
             var speed = s[9]; // m/s
             var heading = s[10];
             var onGround = s[8];
+            var lastContact = s[4];
 
             // Skip: no callsign, on ground, no position
             if (!callsign || onGround || lat === null || lon === null) continue;
@@ -168,9 +110,10 @@
                 airlineName: airlineName,
                 lat: lat,
                 lon: lon,
-                altitude: alt ? Math.round(alt * 3.281) : 35000, // m → ft
-                speed: speed ? Math.round(speed * 1.944) : 480, // m/s → kts
-                heading: heading || 0,
+                altitude: alt !== null ? Math.round(alt * 3.281) : null, // m → ft
+                speed: speed !== null ? Math.round(speed * 1.944) : null, // m/s → kts
+                heading: heading !== null ? heading : null,
+                lastContact: lastContact || null,
                 nearAirport: nearCode,
                 country: country
             });
@@ -179,55 +122,12 @@
         return flights;
     }
 
-    // Build route pairs from live flights:
-    // Pick random pairs of airports that have nearby active flights
-    function buildLiveRoutes(flights) {
-        // Collect airports with nearby flights
-        var activeAirports = {};
-        for (var i = 0; i < flights.length; i++) {
-            var f = flights[i];
-            if (f.nearAirport) activeAirports[f.nearAirport] = true;
-        }
-
-        var codes = Object.keys(activeAirports);
-        if (codes.length < 2) return [];
-
-        // Build route pairs from airports with active traffic
-        var routes = [];
-        for (var i = 0; i < codes.length; i++) {
-            for (var j = i + 1; j < codes.length; j++) {
-                if (SR.getAirport(codes[i]) && SR.getAirport(codes[j])) {
-                    routes.push([codes[i], codes[j]]);
-                }
-            }
-        }
-        return routes;
-    }
-
-    // ---- Store live flights for the popup to use real data ----
+    // Live states are used only for explicit aircraft search. They do not
+    // contain origin/destination data, so they must not decorate route demos.
     SR.liveFlights = [];
-
-    // Get a real flight near a given airport code
-    SR.getRealFlight = function(airportCode) {
-        if (!SR.liveFlights.length) return null;
-        // Find flights near this airport
-        var ap = SR.getAirport(airportCode);
-        if (!ap) return null;
-
-        var best = null, bestDist = Infinity;
-        for (var i = 0; i < SR.liveFlights.length; i++) {
-            var f = SR.liveFlights[i];
-            var dLat = f.lat - ap.lat, dLon = f.lon - ap.lon;
-            var d = dLat * dLat + dLon * dLon;
-            if (d < bestDist) { bestDist = d; best = f; }
-        }
-        return bestDist < 25 ? best : null; // within ~5 degrees
-    };
 
     // ---- Main fetch function ----
     SR.fetchRoutes = function() {
-        // Wait for credentials to load first
-        return credsLoaded.then(function() {
         // Check cache
         try {
             var raw = localStorage.getItem(CACHE_KEY);
@@ -236,52 +136,34 @@
                 if (Date.now() - cached.ts < CACHE_TTL) {
                     console.log('[SkyRoutes] Using cached live data (' + cached.flightCount + ' flights)');
                     SR.liveFlights = cached.flights || [];
-                    if (cached.routes && cached.routes.length > 5) {
-                        return Promise.resolve(cached.routes);
-                    }
+                    return Promise.resolve(SR.POPULAR_ROUTES);
                 }
             }
         } catch(e) {}
 
-        // No credentials? Skip API, use fallback
-        if (!CLIENT_ID || !CLIENT_SECRET) {
-            console.log('[SkyRoutes] No credentials — using curated routes');
-            return SR.POPULAR_ROUTES;
-        }
+        console.log('[SkyRoutes] Fetching anonymous live data from OpenSky...');
 
-        console.log('[SkyRoutes] Fetching live data from OpenSky...');
-
-        return getToken()
-            .then(function(token) {
-                return fetchStates(token);
-            })
+        return fetchStates()
             .then(function(data) {
                 var flights = parseFlights(data);
                 console.log('[SkyRoutes] Parsed ' + flights.length + ' known-airline flights');
 
                 SR.liveFlights = flights;
 
-                var liveRoutes = buildLiveRoutes(flights);
-                console.log('[SkyRoutes] Built ' + liveRoutes.length + ' live route pairs');
-
-                var allRoutes = liveRoutes.concat(SR.POPULAR_ROUTES);
-
                 try {
                     localStorage.setItem(CACHE_KEY, JSON.stringify({
                         ts: Date.now(),
-                        routes: allRoutes,
-                        flights: flights.slice(0, 200),
+                        flights: flights,
                         flightCount: flights.length
                     }));
                 } catch(e) {}
 
-                return allRoutes;
+                return SR.POPULAR_ROUTES;
             })
             .catch(function(err) {
                 console.log('[SkyRoutes] API error, using fallback:', err.message);
                 return SR.POPULAR_ROUTES;
             });
-        }); // end credsLoaded.then
     };
 
     window.SkyRoutes = SR;

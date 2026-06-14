@@ -22,13 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject OpenSky credentials (obfuscated, not in a parseable JSON file)
-        run: |
-          cat > _creds.js << 'SCRIPT'
-          (function(){var S=window.SkyRoutes||{};S._cid="${{ secrets.OPENSKY_CLIENT_ID }}";S._cse="${{ secrets.OPENSKY_CLIENT_SECRET }}";window.SkyRoutes=S;})();
-          SCRIPT
-          # Insert the creds script before api.js in index.html
-          sed -i 's|<script src="api.js"></script>|<script src="_creds.js"></script>\n    <script src="api.js"></script>|' index.html
+      - name: Run regression checks
+        run: node tests.js
+
+      - name: Remove test/dev files from deploy artifact
+        run: rm -f tests.js credentails.json
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

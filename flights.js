@@ -42,6 +42,7 @@
     function haversineKm(a,b) {
         var R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180;
         var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+        x=Math.max(0,Math.min(1,x));
         return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
     }
 
@@ -52,29 +53,26 @@
 
     function computeArc(from,to) {
         var pts=[];
-        var fromLon = from.lon, toLon = to.lon;
-
-        // Dateline fix: if the longitude gap > 180°, wrap the shorter way
-        var dLon = toLon - fromLon;
-        if (dLon > 180) toLon -= 360;
-        else if (dLon < -180) toLon += 360;
-
-        var midLat=(from.lat+to.lat)/2, midLon=(fromLon+toLon)/2;
-        var dLat=to.lat-from.lat;
-        dLon = toLon - fromLon;
-        var dist=Math.sqrt(dLat*dLat+dLon*dLon);
-        var pLat=-dLon,pLon=dLat,pLen=Math.sqrt(pLat*pLat+pLon*pLon);
-        if(pLen>0){pLat/=pLen;pLon/=pLen;}
-        var ch=Math.min(dist*0.28,18);
-        var cLat=midLat+pLat*ch, cLon=midLon+pLon*ch;
+        var lat1=from.lat*Math.PI/180, lon1=from.lon*Math.PI/180;
+        var lat2=to.lat*Math.PI/180, lon2=to.lon*Math.PI/180;
+        var a=[Math.cos(lat1)*Math.cos(lon1),Math.cos(lat1)*Math.sin(lon1),Math.sin(lat1)];
+        var b=[Math.cos(lat2)*Math.cos(lon2),Math.cos(lat2)*Math.sin(lon2),Math.sin(lat2)];
+        var omega=Math.acos(Math.max(-1,Math.min(1,a[0]*b[0]+a[1]*b[1]+a[2]*b[2])));
+        var sinOmega=Math.sin(omega), previousLon=from.lon;
         for(var i=0;i<=ARC_POINTS;i++){
-            var t=i/ARC_POINTS, u=1-t;
-            var lat=u*u*from.lat+2*u*t*cLat+t*t*to.lat;
-            var lon=u*u*fromLon+2*u*t*cLon+t*t*toLon;
-            // Normalize longitude back to [-180, 180]
-            if(lon>180) lon-=360;
-            else if(lon<-180) lon+=360;
-            pts.push({lat:lat, lon:lon});
+            var t=i/ARC_POINTS, x, y, z;
+            if(sinOmega<1e-6){
+                x=a[0]+(b[0]-a[0])*t; y=a[1]+(b[1]-a[1])*t; z=a[2]+(b[2]-a[2])*t;
+            }else{
+                var wa=Math.sin((1-t)*omega)/sinOmega, wb=Math.sin(t*omega)/sinOmega;
+                x=a[0]*wa+b[0]*wb; y=a[1]*wa+b[1]*wb; z=a[2]*wa+b[2]*wb;
+            }
+            var lat=Math.atan2(z,Math.sqrt(x*x+y*y))*180/Math.PI;
+            var lon=Math.atan2(y,x)*180/Math.PI;
+            while(lon-previousLon>180) lon-=360;
+            while(lon-previousLon<-180) lon+=360;
+            pts.push({lat:lat,lon:lon});
+            previousLon=lon;
         }
         return pts;
     }
@@ -172,20 +170,6 @@
         ctx.stroke();
     }
 
-    function drawWake(ctx,map,pts,headIdx,color,alpha,now) {
-        var start=Math.max(0,headIdx-16);
-        for(var i=start;i<headIdx;i+=2){
-            var age=(headIdx-i)/16;
-            var p=map.latLngToContainerPoint(L.latLng(pts[i].lat,pts[i].lon));
-            var drift=Math.sin(now*0.002+i*1.7)*age*3;
-            var radius=1.8-age;
-            ctx.beginPath();
-            ctx.arc(p.x,p.y+drift,Math.max(0.45,radius),0,Math.PI*2);
-            ctx.fillStyle='hsla('+color.h+','+color.s+'%,'+(color.l+20)+'%,'+(alpha*(1-age)*0.32)+')';
-            ctx.fill();
-        }
-    }
-
     function drawApproachRings(ctx,map,airport,color,intensity,now) {
         if(intensity<=0) return;
         var p=map.latLngToContainerPoint(L.latLng(airport.lat,airport.lon));
@@ -229,22 +213,11 @@
             var fromAp=SR.getAirport(r[0]), toAp=SR.getAirport(r[1]);
             var dist=Math.round(haversineKm(fromAp,toAp));
 
-            // Try to get real flight data near the departure airport
-            var real = SR.getRealFlight ? SR.getRealFlight(r[0]) : null;
-            var flightName, airlineName, baseAlt, baseSpeed;
-
-            if (real) {
-                flightName = real.flightName;
-                airlineName = real.airlineName;
-                baseAlt = real.altitude || (30000+Math.floor(Math.random()*12000));
-                baseSpeed = real.speed || (420+Math.floor(Math.random()*140));
-            } else {
-                var fl = randomFlight();
-                flightName = fl.number;
-                airlineName = fl.airline;
-                baseAlt = 30000+Math.floor(Math.random()*12000);
-                baseSpeed = 420+Math.floor(Math.random()*140);
-            }
+            var fl = randomFlight();
+            var flightName = fl.number;
+            var airlineName = fl.airline;
+            var baseAlt = 30000+Math.floor(Math.random()*12000);
+            var baseSpeed = 420+Math.floor(Math.random()*140);
 
             return {
                 fromCode:r[0], toCode:r[1], from:fromAp, to:toAp,
@@ -252,7 +225,7 @@
                 duration:durationForDistance(dist), color:pickColor(),
                 flightName:flightName, airlineName:airlineName,
                 baseAlt:baseAlt, baseSpeed:baseSpeed,
-                distance:dist, isLive: !!real
+                distance:dist, dataStatus:'SIMULATED'
             };
         },
 
@@ -294,11 +267,6 @@
             if(!current) return null;
             var exactIdx = progress * (current.arcPoints.length - 1);
             return lerpPt(current.arcPoints, exactIdx);
-        },
-
-        getExactIndex: function(progress) {
-            if(!current) return 0;
-            return progress * (current.arcPoints.length - 1);
         },
 
         draw: function(ctx, map, now) {
@@ -344,11 +312,12 @@
             // ---- Beacons (only when visible) ----
             var depI=Math.max(0,1-(state.progress/0.12));
             var arrI=Math.max(0,(state.progress-0.86)/0.14);
-            if(depI>0.01) drawAirportBeacon(ctx,map,current.from,c,depI,now);
-            if(arrI>0.01) drawAirportBeacon(ctx,map,current.to,c,arrI,now);
-            if(state.progress<0.06) drawAirportShockwave(ctx,map,current.from,c,state.progress/0.055);
-            if(state.progress>0.945) drawAirportShockwave(ctx,map,current.to,c,(state.progress-0.945)/0.055);
-            if(state.progress>0.72) drawApproachRings(ctx,map,current.to,c,(state.progress-0.72)/0.28,now);
+            var routeFrom=pts[0], routeTo=pts[pts.length-1];
+            if(depI>0.01) drawAirportBeacon(ctx,map,routeFrom,c,depI,now);
+            if(arrI>0.01) drawAirportBeacon(ctx,map,routeTo,c,arrI,now);
+            if(state.progress<0.06) drawAirportShockwave(ctx,map,routeFrom,c,state.progress/0.055);
+            if(state.progress>0.945) drawAirportShockwave(ctx,map,routeTo,c,(state.progress-0.945)/0.055);
+            if(state.progress>0.72) drawApproachRings(ctx,map,routeTo,c,(state.progress-0.72)/0.28,now);
 
             // ---- Traveled trail: 3 bands instead of per-segment (3 draw calls, not 120) ----
             if(headIdx > 2) {

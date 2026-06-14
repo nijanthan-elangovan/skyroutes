@@ -1,4 +1,4 @@
-// ---- effects.js: audio, weather, terminator, aurora, city lights, turbulence, history ----
+// ---- effects.js: audio, terminator, aurora, city lights, turbulence, history ----
 
 (function() {
     var SR = window.SkyRoutes || {};
@@ -70,7 +70,7 @@
 
     SR.effects = {
         // Update audio based on flight state
-        updateAudio: function(progress, speed, altitude) {
+        updateAudio: function(progress, speed) {
             if (!audioStarted || !audioCtx) return;
             // Engine: louder during takeoff/landing, quieter during cruise
             var engVol;
@@ -95,8 +95,9 @@
         // ==============================================
         // 2. DAY/NIGHT TERMINATOR
         // ==============================================
-        drawTerminator: function(ctx, map, W, H, now) {
-            var d = new Date(now);
+        drawTerminator: function(ctx, map) {
+            var d = new Date();
+            var worldOffset = Math.round(map.getCenter().lng / 360) * 360;
             // Solar declination (approximate)
             var dayOfYear = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
             var declination = -23.45 * Math.cos(2 * Math.PI / 365 * (dayOfYear + 10));
@@ -108,12 +109,12 @@
             ctx.beginPath();
             // Draw the night side as a filled polygon
             var points = [];
-            for (var lon = -180; lon <= 180; lon += 3) {
+            for (var solarLon = -180; solarLon <= 180; solarLon += 3) {
                 // Latitude where terminator crosses at this longitude
-                var hourAngle = (lon - solarNoonLon) * Math.PI / 180;
+                var hourAngle = (solarLon - solarNoonLon) * Math.PI / 180;
                 var decRad = declination * Math.PI / 180;
                 var termLat = Math.atan(-Math.cos(hourAngle) / Math.tan(decRad)) * 180 / Math.PI;
-                var p = map.latLngToContainerPoint(L.latLng(termLat, lon));
+                var p = map.latLngToContainerPoint(L.latLng(termLat, solarLon + worldOffset));
                 points.push(p);
             }
 
@@ -122,8 +123,8 @@
             ctx.moveTo(points[0].x, points[0].y);
             for (var i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
             // Close along the bottom/top edge
-            var corner1 = map.latLngToContainerPoint(L.latLng(nightSide, 180));
-            var corner2 = map.latLngToContainerPoint(L.latLng(nightSide, -180));
+            var corner1 = map.latLngToContainerPoint(L.latLng(nightSide, 180 + worldOffset));
+            var corner2 = map.latLngToContainerPoint(L.latLng(nightSide, -180 + worldOffset));
             ctx.lineTo(corner1.x, corner1.y);
             ctx.lineTo(corner2.x, corner2.y);
             ctx.closePath();
@@ -133,31 +134,25 @@
         },
 
         // ==============================================
-        // 3. TIMEZONE CLOCK (proper fractional offsets)
+        // 3. APPROXIMATE LOCAL SOLAR TIME
         // ==============================================
         getLocalTime: function(lon, lat) {
-            // Use Intl API if available for accurate timezone
             try {
-                // Find timezone by coordinates using a lookup table for known offsets
-                // India (+5:30), Nepal (+5:45), Iran (+3:30), Newfoundland (-3:30),
-                // Afghanistan (+4:30), Myanmar (+6:30), Marquesas (-9:30),
-                // Chatham Islands (+12:45)
+                while (lon > 180) lon -= 360;
+                while (lon < -180) lon += 360;
                 var offsetMin;
-                // Check known fractional-offset regions by lat/lon bounds
-                if (lat > 6 && lat < 36 && lon > 68 && lon < 98) offsetMin = 330; // India/Sri Lanka +5:30
-                else if (lat > 26 && lat < 31 && lon > 80 && lon < 89) offsetMin = 345; // Nepal +5:45
-                else if (lat > 24 && lat < 40 && lon > 44 && lon < 64) offsetMin = 210; // Iran +3:30
-                else if (lat > 29 && lat < 39 && lon > 60 && lon < 75) offsetMin = 270; // Afghanistan +4:30
+                if (lat > 26 && lat < 31 && lon > 80 && lon < 89) offsetMin = 345; // Nepal
+                else if (lat > 29 && lat < 39 && lon > 60 && lon < 75) offsetMin = 270; // Afghanistan
+                else if (lat > 6 && lat < 36 && lon > 68 && lon < 98) offsetMin = 330; // India/Sri Lanka
+                else if (lat > 24 && lat < 40 && lon > 44 && lon < 64) offsetMin = 210; // Iran
                 else if (lat > 10 && lat < 29 && lon > 92 && lon < 102) offsetMin = 390; // Myanmar +6:30
                 else if (lat > 44 && lat < 53 && lon > -60 && lon < -52) offsetMin = -210; // Newfoundland -3:30
                 else if (lat > -45 && lat < -43 && lon > -177 && lon < -176) offsetMin = 765; // Chatham +12:45
-                else offsetMin = Math.round(lon / 15) * 60; // standard whole-hour
+                else offsetMin = Math.round(lon / 15) * 60;
 
-                var d = new Date();
-                var utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
-                var local = new Date(utcMs + offsetMin * 60000);
-                var h = local.getHours();
-                var m = local.getMinutes();
+                var local = new Date(Date.now() + offsetMin * 60000);
+                var h = local.getUTCHours();
+                var m = local.getUTCMinutes();
                 return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
             } catch(e) {
                 return '--:--';
@@ -235,7 +230,7 @@
         // 6. TURBULENCE
         // ==============================================
         _turbZones: null,
-        initTurbulence: function(arcPointsLength) {
+        initTurbulence: function() {
             // Random zones along the route
             this._turbZones = [];
             var count = 1 + Math.floor(Math.random() * 2);
@@ -296,9 +291,15 @@
                 var c = h.color;
                 var el = document.createElement('div');
                 el.className = 'hr-item';
-                el.innerHTML =
-                    '<div class="hr-arc" style="color:hsl(' + c.h + ',' + c.s + '%,' + c.l + '%)">⌒</div>' +
-                    '<div class="hr-route">' + h.fromCode + '→' + h.toCode + '</div>';
+                var arc = document.createElement('div');
+                arc.className = 'hr-arc';
+                arc.style.color = 'hsl(' + c.h + ',' + c.s + '%,' + c.l + '%)';
+                arc.textContent = '⌒';
+                var route = document.createElement('div');
+                route.className = 'hr-route';
+                route.textContent = h.fromCode + '→' + h.toCode;
+                el.appendChild(arc);
+                el.appendChild(route);
                 container.appendChild(el);
             }
         },

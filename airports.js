@@ -110,9 +110,9 @@ SkyRoutes.POPULAR_ROUTES = [
     ['FRA','DEL'],['CDG','BLR'],['LHR','DEL'],['AMS','BOM'],
 
     // India routes
-    ['BOM','DXB'],['BOM','SIN'],['BOM','LHR'],['BOM','NRT'],
+    ['BOM','DXB'],['BOM','SIN'],['BOM','NRT'],
     ['BOM','SFO'],['BOM','JFK'],['DEL','DXB'],['DEL','SIN'],
-    ['DEL','LHR'],['DEL','YYZ'],['BLR','SIN'],['BLR','FRA'],
+    ['DEL','YYZ'],['BLR','SIN'],['BLR','FRA'],
     ['MAA','SIN'],['MAA','KUL'],['HYD','DXB'],['CCU','BKK'],
     ['COK','DOH'],['DEL','BKK'],['BOM','IST'],['DEL','ICN'],
 
@@ -138,14 +138,14 @@ SkyRoutes.POPULAR_ROUTES = [
     ['TPE','SIN'],['HKG','SYD'],['BKK','SYD'],['PEK','SIN'],
 
     // Oceania
-    ['SYD','LAX'],['SYD','SIN'],['MEL','SIN'],['AKL','SYD'],
+    ['MEL','SIN'],['AKL','SYD'],
     ['SYD','NRT'],['MEL','HKG'],['AKL','LAX'],
 
     // Cross-continental
     ['JNB','SYD'],['CAI','BOM'],['IST','PEK'],['ARN','NRT'],
     ['CPH','JFK'],['HEL','NRT'],['OSL','JFK'],['ATH','DXB'],
-    ['DUB','JFK'],['LIS','GRU'],['MAD','MEX'],['BCN','JFK'],
-    ['MEX','MAD'],['MEX','CDG'],['YVR','SYD']
+    ['DUB','JFK'],['LIS','GRU'],['MAD','MEX'],
+    ['MEX','CDG'],['YVR','SYD']
 ];
 
 SkyRoutes.getAirport = function(code) {
