@@ -144,6 +144,7 @@
                 '<div class="fp-flap-group" id="fp-dest">' + splitFlapHTML(fl.toCode) + '</div>' +
               '</div>' +
               '<div class="fp-divider"></div>' +
+              '<div class="fp-clock" id="fp-clock"></div>' +
               '<div class="fp-stats">' +
                 '<div class="fp-stat"><span class="fp-stat-label">ALT</span><span class="fp-stat-value" id="fp-alt">—</span></div>' +
                 '<div class="fp-stat"><span class="fp-stat-label">SPD</span><span class="fp-stat-value" id="fp-spd">—</span></div>' +
@@ -151,6 +152,7 @@
                 '<div class="fp-stat"><span class="fp-stat-label">TIME</span><span class="fp-stat-value" id="fp-time">—</span></div>' +
               '</div>' +
               '<div class="fp-progress"><div class="fp-progress-fill" id="fp-bar"></div></div>' +
+              '<div class="fp-turb" id="fp-turb">TURB: —</div>' +
             '</div>';
         overlay.appendChild(el);
         popup = el;
@@ -159,11 +161,15 @@
             spd: el.querySelector('#fp-spd'),
             dist: el.querySelector('#fp-dist'),
             time: el.querySelector('#fp-time'),
-            bar: el.querySelector('#fp-bar')
+            bar: el.querySelector('#fp-bar'),
+            clock: el.querySelector('#fp-clock'),
+            turb: el.querySelector('#fp-turb')
         };
         popupRefs.dist.textContent = fl.distance.toLocaleString() + ' km';
-        // Set progress bar color to match flight
         popupRefs.bar.style.background = acc;
+
+        // Init turbulence zones for this flight
+        if (SR.effects) SR.effects.initTurbulence(fl.arcPoints.length);
 
         var startPx = map.latLngToContainerPoint(L.latLng(fl.from.lat, fl.from.lon));
         popupX = startPx.x + 24;
@@ -222,18 +228,38 @@
         if (popupRefs.alt) popupRefs.alt.textContent = live.altitude.toLocaleString() + ' ft';
         if (popupRefs.spd) popupRefs.spd.textContent = live.speed + ' kts';
 
-        // Elapsed time (simulated flight hours based on distance & speed)
         if (popupRefs.time) {
-            var simHours = (flight.distance * st.progress) / (live.speed * 1.852); // kts→km/h
+            var simHours = (flight.distance * st.progress) / (live.speed * 1.852);
             var h = Math.floor(simHours);
             var m = Math.floor((simHours - h) * 60);
             popupRefs.time.textContent = h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
         }
 
-        // Progress bar
         if (popupRefs.bar) {
             popupRefs.bar.style.width = Math.round(st.progress * 100) + '%';
         }
+
+        // Local time at current position
+        if (popupRefs.clock) {
+            var headPos = SR.flightSystem.getHeadPosition(st.progress);
+            if (headPos) {
+                popupRefs.clock.textContent = 'LOCAL ' + SR.effects.getLocalTime(headPos.lon);
+            }
+        }
+
+        // Turbulence indicator
+        if (popupRefs.turb && SR.effects) {
+            var turb = SR.effects.getTurbulence(st.progress);
+            if (turb) {
+                popupRefs.turb.textContent = 'TURB: ' + turb.severity;
+                popupRefs.turb.classList.add('active');
+            } else {
+                popupRefs.turb.classList.remove('active');
+            }
+        }
+
+        // Audio
+        if (SR.effects) SR.effects.updateAudio(st.progress, live.speed, live.altitude);
     }
 
     function fadeOutPopup() {
@@ -244,6 +270,23 @@
         popup = null; popupRefs = {};
         setTimeout(function() { p.remove(); }, 1500);
     }
+
+    // ---- Skip to next (for keyboard shortcut) ----
+    SR.skipToNext = function() {
+        if (state === STATE.FLY) {
+            if (SR.effects) {
+                SR.effects.addToHistory(flight);
+                SR.effects.fadeOutAudio();
+            }
+            fadeOutPopup();
+            prevFlight = flight;
+            prevFadeStart = performance.now();
+            flight = takeNext();
+            fillQueue();
+            state = STATE.FADE_OUT;
+            stateStart = performance.now();
+        }
+    };
 
     // ---- API ----
     SR.fetchRoutes().then(function(routes) { SR.flightSystem.setRoutes(routes); fillQueue(); });
@@ -568,22 +611,57 @@
 
         // ======== FLY ========
         if (state === STATE.FLY) {
+            if (SR.paused) { lastTime = now; return; } // pause support
+
             var st = SR.flightSystem.getState(now);
             if (st && !st.done) {
                 var headPos = SR.flightSystem.getHeadPosition(st.progress);
                 if (headPos) {
+                    // Takeoff zoom: start tight, pull back
+                    var flightZoom = zoomForRoute(flight.from, flight.to);
+                    var camZoom = flightZoom;
+                    if (st.progress < 0.08) {
+                        camZoom = flightZoom + (5.5 - flightZoom) * (1 - st.progress / 0.08);
+                    }
+                    // Landing zoom: push in toward destination
+                    else if (st.progress > 0.92) {
+                        camZoom = flightZoom + (5.2 - flightZoom) * ((st.progress - 0.92) / 0.08);
+                    }
+
                     var leadProgress = Math.min(st.progress + Math.min(0.035, (1 - st.progress) * 0.5), 1);
                     var leadPos = SR.flightSystem.getHeadPosition(leadProgress);
-                    moveCam(
-                        leadPos.lat,
-                        leadPos.lon,
-                        zoomForRoute(flight.from, flight.to), dt
-                    );
+                    moveCam(leadPos.lat, leadPos.lon, camZoom, dt);
+
+                    // Day/night terminator
+                    if (SR.effects) SR.effects.drawTerminator(ctx, map, W, H, now);
+
+                    // City lights near departure (fading out) and arrival (fading in)
+                    if (SR.effects) {
+                        var depCityI = Math.max(0, 1 - st.progress / 0.12);
+                        var arrCityI = Math.max(0, (st.progress - 0.88) / 0.12);
+                        if (depCityI > 0.01)
+                            SR.effects.drawCityLights(ctx, map, flight.from, flight.fromCode, depCityI, st.opacity);
+                        if (arrCityI > 0.01)
+                            SR.effects.drawCityLights(ctx, map, flight.to, flight.toCode, arrCityI, st.opacity);
+                    }
+
+                    // Aurora borealis
+                    if (SR.effects && headPos.lat > 50)
+                        SR.effects.drawAurora(ctx, map, headPos.lat, flight.color, st.opacity, now);
                 }
+
                 SR.flightSystem.draw(ctx, map, now);
+
+                // Phase label (DEPARTING / ARRIVING / LANDED)
+                if (SR.effects) SR.effects.drawPhaseLabel(ctx, W, H, st.progress, st.opacity);
+
                 updatePopup(now);
             } else {
-                // Flight done
+                // Flight done — add to history, audio fade
+                if (SR.effects) {
+                    SR.effects.addToHistory(flight);
+                    SR.effects.fadeOutAudio();
+                }
                 fadeOutPopup();
                 prevFlight = flight;
                 prevFadeStart = now;
